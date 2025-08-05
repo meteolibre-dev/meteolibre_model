@@ -43,7 +43,7 @@ if __name__ == "__main__":
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=8,
+        batch_size=1,
         shuffle=True,
         num_workers=16,
     )  # )
@@ -73,7 +73,7 @@ if __name__ == "__main__":
         logger=logger,
         accumulate_grad_batches=2,
         #fast_dev_run=True,
-        #accelerator="cpu", # debug
+        accelerator="cpu", # debug
         callbacks=[callback],
         gradient_clip_val=1.0,
         log_every_n_steps=5,

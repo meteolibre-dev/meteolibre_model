@@ -226,8 +226,12 @@ class AmbiantDiffusion(pl.LightningModule):
         # Loss is MSE between predicted and target velocity fields
         loss = self.criterion(pred, input_decode)
         loss = w_t * loss  # ponderate loss
+        
+        mask_all = torch.where(input_decode != -4, 1, 0)
+        
+        loss = loss * mask_all
 
-        loss = loss.mean()
+        loss = loss.mean() / mask_all.mean()
 
         # Log the lossruff
         self.log("train_loss", loss)
@@ -426,7 +430,7 @@ def select_random_points(video_tensor_noisy: torch.Tensor, video_tensor_target: 
     # We use advanced indexing to pick the values at the specific (b, t, w, h)
     # locations. The ':' selects all channels for those locations.
     gathered_values = video_tensor_noisy[b_indices, t_indices, :, w_indices, h_indices]
-    gathered_values_target = video_tensor_noisy[b_indices, t_indices, :, w_indices, h_indices]
+    gathered_values_target = video_tensor_target[b_indices, t_indices, :, w_indices, h_indices]
 
     # 5. Stack the indices to create coordinate vectors (the "Coordinate In")
     coords = torch.stack([t_indices, w_indices, h_indices], dim=2).float()
