@@ -100,8 +100,9 @@ class ASFTDecoder(nn.Module):
         self,
         embed_dim: int,
         num_heads: int,
-        depth: int = 1,
-        output_dim: Optional[int] = None
+        depth: int = 2,
+        output_dim: Optional[int] = None,
+        condition_size: int = 3,
     ):
         """
         Initializes the Decoder.
@@ -112,9 +113,17 @@ class ASFTDecoder(nn.Module):
             depth (int): The number of CrossAttentionBlocks to stack.
             output_dim (int, optional): The dimension of the final output. If None,
                                         it defaults to `embed_dim`.
+            condition_size (int): The dimensionality of the scalar condition.
         """
         super().__init__()
         
+        # MLP to process scalar condition
+        self.mlp = nn.Sequential(
+            nn.Linear(condition_size, embed_dim, bias=True),
+            nn.SiLU(),
+            nn.Linear(embed_dim, embed_dim, bias=True),
+        )
+
         # Stack of cross-attention blocks
         self.blocks = nn.ModuleList([
             CrossAttentionBlock(embed_dim, num_heads) for _ in range(depth)
@@ -124,7 +133,7 @@ class ASFTDecoder(nn.Module):
         # (e.g., predicting a 3D velocity vector)
         self.proj_out = nn.Linear(embed_dim, output_dim or embed_dim)
 
-    def forward(self, queries: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
+    def forward(self, queries: torch.Tensor, context: torch.Tensor, x_scalar: torch.Tensor) -> torch.Tensor:
         """
         Forward pass for the Decoder.
 
@@ -133,6 +142,7 @@ class ASFTDecoder(nn.Module):
                                     These are the points for which we want predictions.
             context (torch.Tensor): The context tensor from the encoder (z_ft).
                                     Shape: (B, N_context, C_in).
+            x_scalar (torch.Tensor): The scalar condition. Shape: (B, condition_size).
 
         Returns:
             torch.Tensor: The final predictions for each query point.
@@ -140,9 +150,14 @@ class ASFTDecoder(nn.Module):
         """
         x = queries
         
+        # Process scalar condition
+        x_scalar_emb = self.mlp(x_scalar)
+        
         for block in self.blocks:
             # In each block, the queries are refined by attending to the same context
             x = block(x, context)
+            # Apply FiLM-like modulation
+            x = x * (1 + x_scalar_emb.unsqueeze(1))
         
         # Project to the final output dimension
         output = self.proj_out(x)
@@ -163,7 +178,6 @@ class ASFTEncoder(nn.Module):
         condition_size: int = 3,
         in_channels: int = 5,
         nb_temporals: int = 6,
-        output_dim: Optional[int] = None
     ):
         """
         Initializes the Decoder.
@@ -193,6 +207,10 @@ class ASFTEncoder(nn.Module):
             hidden_size,  # hidden size
             bias=True,
         )
+        
+        # embedding H W and W
+        self.h_w_embeddings = nn.Parameter(torch.randn(1, 16 * 16 * nb_temporals, hidden_size), requires_grad=True)
+        
 
         self.encoder_model_core = DiT(
             num_patches=16 * 16 * nb_temporals,  # if 2d with flatten size
@@ -207,6 +225,8 @@ class ASFTEncoder(nn.Module):
         )
 
     def forward(self, x_image, x_scalar):
+        """
+        """
 
         x_scalar = self.mlp(x_scalar)
         
@@ -215,6 +235,8 @@ class ASFTEncoder(nn.Module):
         x = self.x_embedder(x)
         
         x = einops.rearrange(x, "(b n) nb_seq d -> b (n nb_seq) d", n=self.nb_temporals)
+        x = x + self.h_w_embeddings
+        
         x = self.encoder_model_core(x, x_scalar)
         
         return x

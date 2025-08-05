@@ -43,10 +43,11 @@ if __name__ == "__main__":
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=1,
+        batch_size=16,
         shuffle=True,
         num_workers=16,
-    )  # )
+    )  # 
+    
     val_dataloader = DataLoader(
         val_dataset, batch_size=1, shuffle=True
     )  # Optional, if you want validation

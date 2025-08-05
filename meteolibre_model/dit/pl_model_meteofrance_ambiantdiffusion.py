@@ -41,13 +41,13 @@ class AmbiantDiffusion(pl.LightningModule):
         learning_rate=1e-3,
         nb_back=4,
         nb_future=2,
+        nb_channels=13,
         shape_image=256,
         nb_pixels_selection=1024,
         test_dataloader=None,
         dir_save="./",
         loss_type="mse",
         parametrization="noisy",
-        pretrained_vae_weight=None,
     ):
         """
         Initialize the MeteoLibrePLModel.
@@ -63,13 +63,14 @@ class AmbiantDiffusion(pl.LightningModule):
 
         self.nb_time_step = nb_back + nb_future
         self.nb_pixels_selection = nb_pixels_selection
+        self.nb_channels = nb_channels
 
         # projection to hidden size
         self.learning_rate = learning_rate
         self.criterion = nn.MSELoss(reduction="none")  # Rectified Flow uses MSE loss
 
-        self.encoder = ASFTEncoder(in_channels=13)
-        self.decoder = ASFTDecoder(embed_dim=384, num_heads=8, output_dim=13)
+        self.encoder = ASFTEncoder(in_channels=nb_channels)
+        self.decoder = ASFTDecoder(embed_dim=384, num_heads=8, output_dim=nb_channels)
 
         self.test_dataloader = test_dataloader
 
@@ -77,12 +78,13 @@ class AmbiantDiffusion(pl.LightningModule):
 
         self.nb_back = nb_back
         self.nb_future = nb_future
+        self.shape_image = shape_image
 
         self.loss_type = loss_type
         self.parametrization = parametrization
-        
+
         # projection decoding
-        self.decode_projection = nn.Linear(13 + 3, 384)
+        self.decode_projection = nn.Linear(nb_channels + 3, 384)
 
     def forward(self, x_image, x_scalar, input_decode):
         """
@@ -98,24 +100,23 @@ class AmbiantDiffusion(pl.LightningModule):
         # 1. Pass x_images thought DiT/ViT setup
         # 2. Pass input_decode though crossattention layer
         encoded_values = self.encoder(x_image, x_scalar)
-        
+
         input_decode = self.decode_projection(input_decode)
-        decoded_values = self.decoder(input_decode, encoded_values)
-        
+        decoded_values = self.decoder(input_decode, encoded_values, x_scalar)
+
         return decoded_values
 
     def prepare_target(self, batch):
         with torch.no_grad():
-                
-            radar_data = batch["radar"].unsqueeze(-1)[:, :self.nb_time_step]
-            groundstation_data = batch["groundstation"][:, :self.nb_time_step]
+            radar_data = batch["radar"].unsqueeze(-1)[:, : self.nb_time_step]
+            groundstation_data = batch["groundstation"][:, : self.nb_time_step]
 
             groundheight = batch["ground_height"].unsqueeze(-1).unsqueeze(1).float()
             landcover = batch["landcover"].unsqueeze(1).float()
 
             groundheight = groundheight.repeat(1, self.nb_time_step, 1, 1, 1)
             landcover = landcover.repeat(1, self.nb_time_step, 1, 1, 1)
-            
+
             # little correction
             groundstation_data = torch.where(
                 groundstation_data == -100, -4, groundstation_data
@@ -129,13 +130,20 @@ class AmbiantDiffusion(pl.LightningModule):
             groundstation_data_corrupt = torch.where(
                 torch.rand_like(groundstation_data) > 0.3, groundstation_data, -4
             )
-            
+
             # concat the two elements
-            x_image = torch.cat((groundheight, landcover, radar_data, groundstation_data), dim=-1)
+            x_image = torch.cat(
+                (groundheight, landcover, radar_data, groundstation_data), dim=-1
+            )
             x_image = x_image.permute(0, 1, 4, 2, 3)  # (N, nb_frame, C, H, W)
 
-            x_image_corrupt = torch.cat((groundheight, landcover, radar_data, groundstation_data_corrupt), dim=-1)
-            x_image_corrupt = x_image_corrupt.permute(0, 1, 4, 2, 3)  # (N, nb_frame, C, H, W)
+            x_image_corrupt = torch.cat(
+                (groundheight, landcover, radar_data, groundstation_data_corrupt),
+                dim=-1,
+            )
+            x_image_corrupt = x_image_corrupt.permute(
+                0, 1, 4, 2, 3
+            )  # (N, nb_frame, C, H, W)
 
             mask_radar = mask_radar.permute(0, 1, 4, 2, 3)
             mask_groundstation = mask_groundstation.permute(0, 1, 4, 2, 3)
@@ -171,16 +179,15 @@ class AmbiantDiffusion(pl.LightningModule):
         """
         # Assuming batch is a dictionary returned by TFDataset
         # and contains 'back_0', 'future_0', 'hour' keys
-        
 
         x_image, x_image_corrupt, mask_radar, mask_groundstation = self.prepare_target(
             batch
         )
-        
+
         batch_size = x_image.shape[0]
-        
-        target_meteo_frames = x_image[:, self.nb_back:(self.nb_back + self.nb_future)]
-        input_meteo_frames = x_image[:, :self.nb_back]
+
+        target_meteo_frames = x_image[:, self.nb_back : (self.nb_back + self.nb_future)]
+        input_meteo_frames = x_image[:, : self.nb_back]
 
         # Prior sample (simple Gaussian noise) - you can refine this prior
         prior_image = self.init_prior(target_meteo_frames.shape)
@@ -205,9 +212,11 @@ class AmbiantDiffusion(pl.LightningModule):
 
         # concat x_t with x_image_back and x_ground_station_image_previous
         input_model = torch.cat([input_meteo_frames, x_t], dim=1)
-        
+
         # here we should randomly select element (nb_pixels_selection) in target_meteo_frames and retrieve their position (t, x, y)
-        input_decode_noisy, input_decode = select_random_points(x_t, target_meteo_frames, self.nb_pixels_selection)
+        input_decode_noisy, input_decode, target_noise = select_random_points(
+            x_t, target_meteo_frames, prior_image, self.nb_pixels_selection
+        )
 
         if self.parametrization == "noisy":
             # prediction the noise
@@ -218,20 +227,18 @@ class AmbiantDiffusion(pl.LightningModule):
 
             w_t = torch.clamp(w_t, min=1.0, max=3.0)
 
-            target = prior_image
-
         else:
             raise ValueError("parametrization not handled")
 
         # Loss is MSE between predicted and target velocity fields
-        loss = self.criterion(pred, input_decode)
+        loss = self.criterion(pred, target_noise)
         loss = w_t * loss  # ponderate loss
-        
+
         mask_all = torch.where(input_decode != -4, 1, 0)
-        
+
         loss = loss * mask_all
 
-        loss = loss.mean() / mask_all.mean()
+        loss = loss.mean() / mask_all.float().mean()
 
         # Log the lossruff
         self.log("train_loss", loss)
@@ -261,12 +268,20 @@ class AmbiantDiffusion(pl.LightningModule):
 
         batch_size = batch["radar"].shape[0]
 
+        x_image, x_image_corrupt, mask_radar, mask_groundstation = self.prepare_target(
+            batch
+        )
 
-        tmp_noise = self.init_prior(target_radar_frames.shape)
+        batch_size = x_image.shape[0]
+
+        target_meteo_frames = x_image[:, self.nb_back : (self.nb_back + self.nb_future)]
+        input_meteo_frames = x_image[:, : self.nb_back]
+
+        tmp_noise = self.init_prior(target_meteo_frames.shape)
 
         for i in range(1, nb_step):
             # concat x_t with x_image_back and x_ground_station_image_previous
-            input_model = torch.cat([input_radar_frames, tmp_noise], dim=1)
+            input_model = torch.cat([input_meteo_frames, tmp_noise], dim=1)
 
             t = i * 1.0 / nb_step
 
@@ -274,31 +289,42 @@ class AmbiantDiffusion(pl.LightningModule):
                 [
                     batch["hour"].clone().detach().float().unsqueeze(1),
                     batch["minute"].clone().detach().float().unsqueeze(1),
-                    torch.ones(batch_size, 1)
-                    .type_as(batch["radar_back"])
-                    .to(self.device)
+                    torch.ones(batch_size, 1).type_as(batch["radar"]).to(self.device)
                     * t,
                 ],
                 dim=1,
             )
 
             if self.parametrization == "noisy":
-                noise = self.forward(input_model, x_scalar)
+                noisy_point = select_all_points(tmp_noise)
+                noise = self.forward(input_model, x_scalar, noisy_point)
 
-                velocity = (
-                    1 / (t + 1e-4) * (tmp_noise - noise[:, self.nb_back :, :, :, :])
+                # 3. Reshape the flat list of points back into the video grid
+                # (B, T*W*H, C) -> (B, T, W, H, C)
+                reshaped_noise = noise.view(
+                    batch_size,
+                    self.nb_future,
+                    self.shape_image,
+                    self.shape_image,
+                    self.nb_channels,
                 )
+
+                # 4. Permute the dimensions to match the standard video format (B, T, C, W, H)
+                # (B, T, W, H, C) -> (B, T, C, W, H)
+                reshaped_noise = reshaped_noise.permute(0, 1, 4, 2, 3)
+
+                velocity = 1 / (t + 1e-4) * (tmp_noise - reshaped_noise)
 
                 tmp_noise = tmp_noise + velocity * 1.0 / nb_step
             else:
                 raise ValueError("parametrization not handled")
 
-        return tmp_noise, target_radar_frames, input_radar_frames
+        return tmp_noise, target_meteo_frames, input_meteo_frames
 
     # on epoch end of training
     def on_train_epoch_end(self):
         # generate image
-        self.model_core.eval()
+        self.eval()
 
         with torch.no_grad():
             result, target_radar_frames, input_radar_frames = self.generate_one(
@@ -311,21 +337,9 @@ class AmbiantDiffusion(pl.LightningModule):
                 [input_radar_frames, target_radar_frames], dim=1
             )
 
-            full_image_result = einops.rearrange(full_image_result, "b t c h w -> b (t h w) c")
-            full_image_target = einops.rearrange(full_image_target, "b t c h w -> b (t h w) c")  
-
-            radar_image_result = (
-                self.vae.decode(full_image_result)
-                .cpu()
-                .numpy()
-            )
-
-            radar_image_target = (
-                self.vae.decode(full_image_target)
-                .cpu()
-                .numpy()
-            )
-
+            radar_image_result = full_image_result.cpu().numpy()
+            radar_image_target = full_image_target.cpu().numpy()
+            
             # reshape first
             self.save_image(radar_image_result, name_append="result")
             self.save_image(radar_image_target, name_append="target")
@@ -337,10 +351,10 @@ class AmbiantDiffusion(pl.LightningModule):
             for f in glob.glob(self.dir_save + "data/*.png"):
                 os.remove(f)
 
-        self.model_core.train()
+        self.train()
 
     def save_gif(self, result, name_append="result", duration=10):
-        nb_frame = result.shape[2]
+        nb_frame = result.shape[1]
         file_name_list = []
 
         for i in range(nb_frame):
@@ -348,7 +362,7 @@ class AmbiantDiffusion(pl.LightningModule):
                 self.dir_save
                 + f"data/{name_append}_radar_epoch_{self.current_epoch}_{i}.png"
             )
-
+            
             plt.figure(figsize=(20, 20))
             plt.imshow(result[0, i, 0, :, :], vmin=-1, vmax=2)
             plt.colorbar()
@@ -378,14 +392,19 @@ class AmbiantDiffusion(pl.LightningModule):
 
         plt.savefig(fname, bbox_inches="tight", pad_inches=0)
         plt.close()
+        
+        img = plt.imread(fname)[:, :, :3]
+        img = img.transpose((2, 0, 1))
 
         # logging image into wandb
-        self.logger.log_image(
-            key=name_append, images=[wandb.Image(fname)], caption=[name_append]
-        )
+        self.logger.experiment.add_image(
+                name_append, img, global_step=self.global_step
+            )
 
 
-def select_random_points(video_tensor_noisy: torch.Tensor, video_tensor_target: torch.Tensor, num_points: int) -> torch.Tensor:
+def select_random_points(
+    video_tensor_noisy: torch.Tensor, video_tensor_target: torch.Tensor, pur_noise: torch.Tensor, num_points: int
+) -> torch.Tensor:
     """
     Selects random spatio-temporal points from a video tensor and returns their
     values and normalized coordinates.
@@ -430,7 +449,12 @@ def select_random_points(video_tensor_noisy: torch.Tensor, video_tensor_target: 
     # We use advanced indexing to pick the values at the specific (b, t, w, h)
     # locations. The ':' selects all channels for those locations.
     gathered_values = video_tensor_noisy[b_indices, t_indices, :, w_indices, h_indices]
-    gathered_values_target = video_tensor_target[b_indices, t_indices, :, w_indices, h_indices]
+    gathered_values_target = video_tensor_target[
+        b_indices, t_indices, :, w_indices, h_indices
+    ]
+    gathered_pur_noise = pur_noise[
+        b_indices, t_indices, :, w_indices, h_indices
+    ]
 
     # 5. Stack the indices to create coordinate vectors (the "Coordinate In")
     coords = torch.stack([t_indices, w_indices, h_indices], dim=2).float()
@@ -438,19 +462,73 @@ def select_random_points(video_tensor_noisy: torch.Tensor, video_tensor_target: 
     # 6. Normalize the coordinates to be in the range [0, 1]
     # We divide by (Dimension - 1) to map the 0-based index range correctly.
     # We use max(1, D-1) to avoid division by zero if a dimension has size 1.
-    normalizer = torch.tensor([
-        max(1, T - 1),
-        max(1, W - 1),
-        max(1, H - 1)
-    ], device=device, dtype=torch.float)
-    
+    normalizer = torch.tensor(
+        [max(1, T - 1), max(1, W - 1), max(1, H - 1)], device=device, dtype=torch.float
+    )
+
     normalized_coords = coords / normalizer
 
     # 7. Concatenate the gathered values and their normalized coordinates
     # This creates the final (B, num_points, C + 3) tensor.
     output_tensor_noisy = torch.cat([gathered_values, normalized_coords], dim=2)
 
-    return output_tensor_noisy, gathered_values_target
+    return output_tensor_noisy, gathered_values_target, gathered_pur_noise
+
+
+def select_all_points(video_tensor: torch.Tensor) -> torch.Tensor:
+    """
+    Selects all spatio-temporal points from a video tensor and returns their
+    values and normalized coordinates.
+
+    This function is useful for inference or evaluation when the entire set of
+    points is required, rather than a random subset.
+
+    Args:
+        video_tensor (torch.Tensor): The input video tensor with a shape of
+                                     (B, T, C, W, H).
+
+    Returns:
+        torch.Tensor: An output tensor of shape (B, T*W*H, C + 3). For each
+                      point, the last dimension contains its C channel values
+                      followed by its 3 normalized spatio-temporal coordinates.
+    """
+    # 1. Get the shape of the input tensor and its device
+    B, T, C, W, H = video_tensor.shape
+    device = video_tensor.device
+
+    # 2. Get all channel values by reshaping the tensor
+    # (B, T, C, W, H) -> (B, C, T, W, H) -> (B, C, T*W*H) -> (B, T*W*H, C)
+    all_values = video_tensor.permute(0, 2, 1, 3, 4).flatten(2).permute(0, 2, 1)
+
+    # 3. Create a grid of all spatio-temporal coordinates
+    t_coords = torch.arange(T, device=device)
+    w_coords = torch.arange(W, device=device)
+    h_coords = torch.arange(H, device=device)
+
+    # Create a meshgrid of coordinates
+    grid = torch.stack(
+        torch.meshgrid(t_coords, w_coords, h_coords, indexing="ij"), dim=-1
+    )
+
+    # Flatten the grid to get a list of all coordinate points
+    all_coords = grid.view(-1, 3).float()  # Shape: (T*W*H, 3)
+
+    # 4. Normalize the coordinates to be in the range [0, 1]
+    normalizer = torch.tensor(
+        [max(1, T - 1), max(1, W - 1), max(1, H - 1)], device=device, dtype=torch.float
+    )
+
+    normalized_coords = all_coords / normalizer
+
+    # 5. Expand the coordinates to match the batch size
+    # (T*W*H, 3) -> (1, T*W*H, 3) -> (B, T*W*H, 3)
+    normalized_coords = normalized_coords.unsqueeze(0).expand(B, -1, -1)
+
+    # 6. Concatenate the values and their normalized coordinates
+    output_tensor = torch.cat([all_values, normalized_coords], dim=2)
+
+    return output_tensor
+
 
 def create_gif_pillow(image_paths, output_path, duration=100):
     """
