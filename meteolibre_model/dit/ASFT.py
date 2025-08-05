@@ -1,6 +1,17 @@
+"""
+Code for https://arxiv.org/pdf/2412.03791v1
+COORDINATE IN AND VALUE OUT: TRAINING FLOW
+TRANSFORMERS IN AMBIENT SPACE
+
+"""
+
 import torch
 import torch.nn as nn
+import einops
 from typing import Optional
+from timm.models.vision_transformer import PatchEmbed
+from dit_ml.dit import DiT
+
 
 class CrossAttentionBlock(nn.Module):
     """
@@ -128,6 +139,7 @@ class ASFTDecoder(nn.Module):
                           Shape: (B, N_query, C_out).
         """
         x = queries
+        
         for block in self.blocks:
             # In each block, the queries are refined by attending to the same context
             x = block(x, context)
@@ -145,23 +157,27 @@ class ASFTEncoder(nn.Module):
     """
     def __init__(
         self,
-        embed_dim: int,
-        num_heads: int,
-        depth: int = 1,
+        hidden_size: int = 384,
+        num_heads: int = 8,
+        depth: int = 12,
+        condition_size: int = 3,
+        in_channels: int = 5,
+        nb_temporals: int = 6,
         output_dim: Optional[int] = None
     ):
         """
         Initializes the Decoder.
 
         Args:
-            embed_dim (int): The dimensionality of the model.
+            hidden_size (int): The dimensionality of the model.
             num_heads (int): The number of attention heads for each block.
             depth (int): The number of CrossAttentionBlocks to stack.
             output_dim (int, optional): The dimension of the final output. If None,
-                                        it defaults to `embed_dim`.
+                                        it defaults to `hidden_size`.
         """
         super().__init__()
         
+        self.nb_temporals = nb_temporals
         
         # projection to hidden size
         self.mlp = nn.Sequential(
@@ -174,15 +190,15 @@ class ASFTEncoder(nn.Module):
             256,  # image size
             16,  # patch size
             in_channels,  # input channels
-            384,  # hidden size
+            hidden_size,  # hidden size
             bias=True,
         )
 
         self.encoder_model_core = DiT(
             num_patches=16 * 16 * nb_temporals,  # if 2d with flatten size
-            hidden_size=384,
-            depth=12,
-            num_heads=8,
+            hidden_size=hidden_size,
+            depth=depth,
+            num_heads=num_heads,
             use_rope=False,
             rope_dimension=3,
             max_h=16,
@@ -192,9 +208,10 @@ class ASFTEncoder(nn.Module):
 
     def forward(self, x_image, x_scalar):
 
-        x_scalar = self.mlp(scalar_input)
+        x_scalar = self.mlp(x_scalar)
         
-        x = einops.rearrange(x_image, "b c n h w -> (b n) c h w")
+        x = einops.rearrange(x_image, "b c n h w -> (b c) n h w")
+        
         x = self.x_embedder(x)
         
         x = einops.rearrange(x, "(b n) nb_seq d -> b (n nb_seq) d", n=self.nb_temporals)
