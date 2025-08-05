@@ -43,7 +43,7 @@ if __name__ == "__main__":
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=16,
+        batch_size=32,
         shuffle=True,
         num_workers=16,
     )  # 
