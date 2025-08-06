@@ -39,7 +39,7 @@ class VAEMeteoLibrePLModelLTXVae(pl.LightningModule):
         dir_save="../",
         input_channels=13,
         output_channels=13,
-        latent_dim=16,
+        latent_dim=128,
         coefficient_reg=0.000001,
         nb_frames=5,
     ):
@@ -75,8 +75,8 @@ class VAEMeteoLibrePLModelLTXVae(pl.LightningModule):
             patch_size=4,
             spatial_compression_ratio=8,
             decoder_layers_per_block=(4, 3, 3, 3, 4),
-            spatio_temporal_scaling=(True, True, True, False),
-            decoder_spatio_temporal_scaling=(True, True, True, False),
+            spatio_temporal_scaling=(True, True, False, False),
+            decoder_spatio_temporal_scaling=(True, True, False, False),
             downsample_type=("conv", "conv", "conv", "conv"),
             upsample_factor=(1, 1, 1, 1),
             decoder_inject_noise=(False, False, False, False, False),
@@ -145,8 +145,8 @@ class VAEMeteoLibrePLModelLTXVae(pl.LightningModule):
         Training step for the PyTorch Lightning module.
         """
 
-        radar_data = batch["radar_back"].unsqueeze(-1)
-        groundstation_data = batch["groundstation_back"]
+        radar_data = batch["radar"].unsqueeze(-1)[:, :self.nb_frames]
+        groundstation_data = batch["groundstation"][:, :self.nb_frames]
 
         groundheight = batch["ground_height"].unsqueeze(-1).unsqueeze(1).float()
         landcover = batch["landcover"].unsqueeze(1).float()
@@ -235,8 +235,8 @@ class VAEMeteoLibrePLModelLTXVae(pl.LightningModule):
         for key in batch.keys():
             batch[key] = batch[key].to(self.device)
 
-        radar_data = batch["radar_back"].unsqueeze(-1)
-        groundstation_data = batch["groundstation_back"]
+        radar_data = batch["radar"].unsqueeze(-1)[:, :self.nb_frames]
+        groundstation_data = batch["groundstation"][:, :self.nb_frames]
 
         groundheight = batch["ground_height"].unsqueeze(-1).unsqueeze(1).float()
         landcover = batch["landcover"].unsqueeze(1).float()
@@ -295,10 +295,13 @@ class VAEMeteoLibrePLModelLTXVae(pl.LightningModule):
         plt.savefig(fname, bbox_inches="tight", pad_inches=0)
         plt.close()
 
+        img = plt.imread(fname)[:, :, :3]
+        img = img.transpose((2, 0, 1))
+
         # logging image into wandb
-        self.logger.log_image(
-            key=name_append, images=[wandb.Image(fname)], caption=[name_append]
-        )
+        self.logger.experiment.add_image(
+                name_append, img, global_step=self.global_step
+            )
 
     def save_gif(self, result, name_append="result", duration=10):
         nb_frame = result.shape[1]

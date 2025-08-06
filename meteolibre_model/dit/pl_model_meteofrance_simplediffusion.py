@@ -12,16 +12,20 @@ from mpmath.libmp import prec_to_dps
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import einops
 from torch.optim import optimizer
 
 import lightning.pytorch as pl
 
 from heavyball import ForeachSOAP
-from diffusers import AutoencoderKLLTXVideo
+
+# from diffusers import AutoencoderKLLTXVideo
+from pytorch3dunet.unet3d.model import ResidualUNet3D
 from meteolibre_model.dit.dit_core import DiTCore
 
 DEFAULT_GS_VALUE = -4.0
+
 
 class Simple3DDiffusion(pl.LightningModule):
     """
@@ -39,6 +43,7 @@ class Simple3DDiffusion(pl.LightningModule):
         nb_back=4,
         nb_future=2,
         nb_channels=13,
+        f_maps=64,
         shape_image=256,
         test_dataloader=None,
         dir_save="./",
@@ -64,38 +69,50 @@ class Simple3DDiffusion(pl.LightningModule):
         self.learning_rate = learning_rate
         self.criterion = nn.MSELoss(reduction="none")  # Rectified Flow uses MSE loss
 
-        self.model_encoder_decoder = AutoencoderKLLTXVideo(
-            in_channels=nb_channels,
-            out_channels=nb_channels,
-        #     latent_channels=128,
-            block_out_channels=(128 // 4, 256 // 4, 512 // 4, 512 // 4),
-        #     down_block_types=(
-        #         "LTXVideoDownBlock3D",
-        #         "LTXVideoDownBlock3D",
-        #         "LTXVideoDownBlock3D",
-        #         "LTXVideoDownBlock3D",
-        #     ),
-            decoder_block_out_channels=(128 // 4, 256 // 4, 512 // 4, 512 // 4),
-        #     layers_per_block=(4, 3, 3, 3, 4),
-        #     patch_size=4,
-        #     spatial_compression_ratio=16,)
-        #     decoder_layers_per_block=(4, 3, 3, 3, 4),
-             spatio_temporal_scaling=(True, True, True, False),
-             decoder_spatio_temporal_scaling=(True, True, True, False),)
-        #     downsample_type=("conv", "conv", "conv", "conv"),
-        #     upsample_factor=(1, 1, 1, 1),
-        #     decoder_inject_noise=(False, False, False, False, False),
-        #     upsample_residual=(False, False, False, False),
-        # )
-        
+        self.f_maps = f_maps
+        self.num_levels = 5
+
+        self.model_encoder_decoder = ResidualUNet3D(
+            nb_channels,
+            nb_channels,
+            final_sigmoid=True,
+            f_maps=self.f_maps,
+            layer_order="gcr",
+            num_groups=8,
+            num_levels=self.num_levels,
+            is_segmentation=True,
+            conv_padding=1,
+            pool_kernel_size=(1, 2, 2),
+        )
+
+        self.list_dimension = [
+            0,
+            f_maps,
+            f_maps * 2,
+            f_maps * 4,
+            f_maps * 8,
+            f_maps * 16,
+        ]
+
         self.model_core = DiTCore(
             self.nb_time_step,
             hidden_size=384,
-            depth=6,
+            depth=12,
             num_heads=6,
             patch_size=2,
-            out_channels=128,
-            in_channels=128,
+            out_channels=1024,
+            in_channels=1024,
+        )
+
+        # film layer projection
+        self.film_layer = nn.Sequential(
+            nn.Linear(condition_size, 384, bias=True),
+            nn.SiLU(),
+            nn.Linear(
+                384,
+                sum([self.f_maps * 2**i for i in range(self.num_levels)]),
+                bias=True,
+            ),
         )
 
         self.test_dataloader = test_dataloader
@@ -120,26 +137,61 @@ class Simple3DDiffusion(pl.LightningModule):
         Returns:
             torch.Tensor: Output tensor from the model.
         """
-        x_image = einops.rearrange(
+        x = einops.rearrange(
             x_image, "batch_size nb_frame c h w -> batch_size c nb_frame h w"
         )
 
-        # encoder
-        encode_input = self.model_encoder_decoder.encode(x_image).latent_dist.mean
+        film_params = self.film_layer(x_scalar)
 
-        breakpoint()
-        # core model
-        attention_output = self.model_core(encode_input, x_scalar)
+        encoders_features = []
+        for idx, encoder in enumerate(self.model_encoder_decoder.encoders):
+            x = encoder(x)
 
-        # decoder
-        final_image = self.model_encoder_decoder.decode(attention_output).sample
-        
-        # reshape
-        final_image = einops.rearrange(
-            final_image, "b c t h w -> b t c h w", t=self.nb_time_step
+            # we apply the film layer to x
+            if idx != 0:
+                x = x + (
+                    1.0
+                    + film_params[
+                        :,
+                        (self.f_maps * 2**(idx - 1)) : (
+                            self.f_maps * 2 ** (idx) + self.f_maps * 2**(idx - 1)
+                        ),
+                    ]
+                    .unsqueeze(-1)
+                    .unsqueeze(-1)
+                    .unsqueeze(-1)
+                )
+            else:
+                x = x + (
+                    1.0
+                    + film_params[:, : self.f_maps]
+                    .unsqueeze(-1)
+                    .unsqueeze(-1)
+                    .unsqueeze(-1)
+                )
+
+            # reverse the encoder outputs to be aligned with the decoder
+            encoders_features.insert(0, x)
+
+        encoders_features = encoders_features[1:]
+
+        x = self.model_core(x, x_scalar)
+
+        # decoder part
+        for decoder, encoder_features in zip(
+            self.model_encoder_decoder.decoders, encoders_features
+        ):
+            # pass the output from the corresponding encoder and the output
+            # of the previous decoder
+            x = decoder(encoder_features, x)
+
+        x = self.model_encoder_decoder.final_conv(x)
+
+        x = einops.rearrange(
+            x, "batch_size c nb_frame h w -> batch_size nb_frame c h w"
         )
 
-        return final_image[:, self.nb_back:]
+        return x[:, self.nb_back :]
 
     def prepare_target(self, batch):
         with torch.no_grad():
@@ -181,7 +233,9 @@ class Simple3DDiffusion(pl.LightningModule):
             )  # (N, nb_frame, C, H, W)
 
             mask_radar = mask_radar.permute(0, 1, 4, 2, 3)
-            mask_groundstation = mask_groundstation.permute(0, 1, 4, 2, 3)
+            mask_groundstation = mask_groundstation.permute(0, 1, 4, 2, 3)[
+                :, self.nb_back : (self.nb_back + self.nb_future)
+            ]
 
         return x_image, x_image_corrupt, mask_radar, mask_groundstation
 
@@ -261,19 +315,34 @@ class Simple3DDiffusion(pl.LightningModule):
             raise ValueError("parametrization not handled")
 
         # Loss is MSE between predicted and target velocity fields
-        loss = self.criterion(pred, prior_image)
-        loss = w_t * loss  # ponderate loss
+        # loss = self.criterion(pred, prior_image)
+        # loss = w_t * loss  # ponderate loss
 
-        mask_all = torch.where(target_meteo_frames != -4, 1, 0)
+        reconstruction_loss_radar = F.mse_loss(
+            pred[:, :, [5], :, :], prior_image[:, :, [5], :, :], reduction="mean"
+        )
+        reconstruction_loss_groundstation = F.mse_loss(
+            pred[:, :, 6:, :, :][mask_groundstation],
+            prior_image[:, :, 6:, :, :][mask_groundstation],
+            reduction="mean",
+        )
+        reconstruction_ground = F.mse_loss(
+            pred[:, :, :5, :, :], prior_image[:, :, :5, :, :], reduction="mean"
+        )
 
-        loss = loss * mask_all
+        reconstruction_loss = (
+            reconstruction_loss_radar
+            + reconstruction_loss_groundstation * 0.3
+            + reconstruction_ground * 0.1
+        )
 
-        loss = loss.mean() / mask_all.float().mean()
+        # logging data
+        self.log("reconstruction_loss", reconstruction_loss)
+        self.log("reconstruction_loss_radar", reconstruction_loss_radar)
+        self.log("reconstruction_loss_groundstation", reconstruction_loss_groundstation)
+        self.log("reconstruction_loss_ground_info", reconstruction_ground)
 
-        # Log the lossruff
-        self.log("train_loss", loss)
-
-        return loss
+        return reconstruction_loss
 
     def configure_optimizers(self):
         """
@@ -357,7 +426,7 @@ class Simple3DDiffusion(pl.LightningModule):
 
             radar_image_result = full_image_result.cpu().numpy()
             radar_image_target = full_image_target.cpu().numpy()
-            
+
             # reshape first
             self.save_image(radar_image_result, name_append="result")
             self.save_image(radar_image_target, name_append="target")
@@ -380,7 +449,7 @@ class Simple3DDiffusion(pl.LightningModule):
                 self.dir_save
                 + f"data/{name_append}_radar_epoch_{self.current_epoch}_{i}.png"
             )
-            
+
             plt.figure(figsize=(20, 20))
             plt.imshow(result[0, i, 0, :, :], vmin=-1, vmax=2)
             plt.colorbar()
@@ -410,18 +479,19 @@ class Simple3DDiffusion(pl.LightningModule):
 
         plt.savefig(fname, bbox_inches="tight", pad_inches=0)
         plt.close()
-        
+
         img = plt.imread(fname)[:, :, :3]
         img = img.transpose((2, 0, 1))
 
         # logging image into wandb
-        self.logger.experiment.add_image(
-                name_append, img, global_step=self.global_step
-            )
+        self.logger.experiment.add_image(name_append, img, global_step=self.global_step)
 
 
 def select_random_points(
-    video_tensor_noisy: torch.Tensor, video_tensor_target: torch.Tensor, pur_noise: torch.Tensor, num_points: int
+    video_tensor_noisy: torch.Tensor,
+    video_tensor_target: torch.Tensor,
+    pur_noise: torch.Tensor,
+    num_points: int,
 ) -> torch.Tensor:
     """
     Selects random spatio-temporal points from a video tensor and returns their
@@ -470,9 +540,7 @@ def select_random_points(
     gathered_values_target = video_tensor_target[
         b_indices, t_indices, :, w_indices, h_indices
     ]
-    gathered_pur_noise = pur_noise[
-        b_indices, t_indices, :, w_indices, h_indices
-    ]
+    gathered_pur_noise = pur_noise[b_indices, t_indices, :, w_indices, h_indices]
 
     # 5. Stack the indices to create coordinate vectors (the "Coordinate In")
     coords = torch.stack([t_indices, w_indices, h_indices], dim=2).float()
