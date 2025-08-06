@@ -55,6 +55,7 @@ if __name__ == "__main__":
     model = Simple3DDiffusion(
         test_dataloader=val_dataloader,
         dir_save="./",
+        parametrization="velocity",
     )
 
     #model.compile()

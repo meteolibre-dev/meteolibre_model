@@ -302,14 +302,46 @@ class Simple3DDiffusion(pl.LightningModule):
         # concat x_t with x_image_back and x_ground_station_image_previous
         input_model = torch.cat([input_meteo_frames, x_t], dim=1)
 
-        if self.parametrization == "noisy":
-            # prediction the noise
-            pred = self.forward(input_model, x_scalar)
+        # prediction the noise
+        pred = self.forward(input_model, x_scalar)
 
+        if self.parametrization == "noisy":
+            
+            target = prior_image
+            
             # coefficient of ponderation for noisy parametrization
             w_t = (1 / (t + 0.0001)) ** 2
 
             w_t = torch.clamp(w_t, min=1.0, max=3.0)
+
+            reconstruction_loss_radar = F.mse_loss(
+                pred[:, :, [5], :, :], target[:, :, [5], :, :], reduction="mean"
+            )
+            reconstruction_loss_groundstation = F.mse_loss(
+                pred[:, :, 6:, :, :][mask_groundstation],
+                target[:, :, 6:, :, :][mask_groundstation],
+                reduction="mean",
+            )
+            reconstruction_ground = F.mse_loss(
+                pred[:, :, :5, :, :], target[:, :, :5, :, :], reduction="mean"
+            )
+
+
+        elif self.parametrization == "velocity":
+            
+            target = target_meteo_frames - prior_image
+        
+            reconstruction_loss_radar = F.mse_loss(
+                pred[:, :, [5], :, :], target[:, :, [5], :, :], reduction="mean"
+            )
+            reconstruction_loss_groundstation = F.mse_loss(
+                pred[:, :, 6:, :, :][mask_groundstation],
+                target[:, :, 6:, :, :][mask_groundstation],
+                reduction="mean",
+            )
+            reconstruction_ground = F.mse_loss(
+                pred[:, :, :5, :, :], target[:, :, :5, :, :], reduction="mean"
+            )
 
         else:
             raise ValueError("parametrization not handled")
@@ -317,19 +349,6 @@ class Simple3DDiffusion(pl.LightningModule):
         # Loss is MSE between predicted and target velocity fields
         # loss = self.criterion(pred, prior_image)
         # loss = w_t * loss  # ponderate loss
-
-        reconstruction_loss_radar = F.mse_loss(
-            pred[:, :, [5], :, :], prior_image[:, :, [5], :, :], reduction="mean"
-        )
-        reconstruction_loss_groundstation = F.mse_loss(
-            pred[:, :, 6:, :, :][mask_groundstation],
-            prior_image[:, :, 6:, :, :][mask_groundstation],
-            reduction="mean",
-        )
-        reconstruction_ground = F.mse_loss(
-            pred[:, :, :5, :, :], prior_image[:, :, :5, :, :], reduction="mean"
-        )
-
         reconstruction_loss = (
             reconstruction_loss_radar
             + reconstruction_loss_groundstation * 0.3
@@ -343,6 +362,7 @@ class Simple3DDiffusion(pl.LightningModule):
         self.log("reconstruction_loss_ground_info", reconstruction_ground)
 
         return reconstruction_loss
+
 
     def configure_optimizers(self):
         """
@@ -393,16 +413,19 @@ class Simple3DDiffusion(pl.LightningModule):
                 ],
                 dim=1,
             )
+            
+            pred = self.forward(input_model, x_scalar)
 
             if self.parametrization == "noisy":
-                noise = self.forward(input_model, x_scalar)
-
-                # 4. Permute the dimensions to match the standard video format (B, T, C, W, H)
-                # (B, T, W, H, C) -> (B, T, C, W, H)
-
-                velocity = 1 / (t + 1e-4) * (tmp_noise - noise)
+                
+                velocity = 1 / (t + 1e-4) * (tmp_noise - pred)
 
                 tmp_noise = tmp_noise + velocity * 1.0 / nb_step
+            elif self.parametrization == "velocity":
+                
+                velocity = pred
+                tmp_noise = tmp_noise + velocity * 1.0 / nb_step
+            
             else:
                 raise ValueError("parametrization not handled")
 

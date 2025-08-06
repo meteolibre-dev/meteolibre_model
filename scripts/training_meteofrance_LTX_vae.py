@@ -6,12 +6,12 @@ from safetensors.torch import save_file
 from huggingface_hub import HfApi
 
 import lightning.pytorch as pl
-from lightning.pytorch.loggers import WandbLogger
+from lightning.pytorch.loggers import TensorBoardLogger #WandbLogger
 from lightning.pytorch.callbacks import ModelCheckpoint
 
 from torch.utils.data import DataLoader
 
-from meteolibre_model.datasets.dataset_meteofrance import (
+from meteolibre_model.datasets.dataset_meteofrance_v2 import (
     MeteoLibreDataset,
 )
 
@@ -25,7 +25,7 @@ torch.set_float32_matmul_precision("medium")
 import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
-PATHDATA = "/workspace/meteolibre_model/hf_dataset/"
+PATHDATA = "/workspace/data/hf_dataset/"
 
 def init_dataset():
     dataset = MeteoLibreDataset(directory=PATHDATA)
@@ -43,7 +43,7 @@ if __name__ == "__main__":
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=8,
+        batch_size=64,
         shuffle=True,
         num_workers=16,
     )  # )
@@ -65,13 +65,13 @@ if __name__ == "__main__":
         save_weights_only=True,
     )
 
-    # logger = TensorBoardLogger("tb_logs/", name="g2pt_grid")
-    logger = WandbLogger(project="meteolibre_meteofrance_model_vae")
+    logger = TensorBoardLogger("tb_logs/", name="ltx_vae")
+    #logger = WandbLogger(project="meteolibre_meteofrance_model_vae")
 
     trainer = pl.Trainer(
         max_time={"hours": 4},
         logger=logger,
-        accumulate_grad_batches=2,
+        #accumulate_grad_batches=2,
         #fast_dev_run=True,
         # accelerator="cpu", # debug
         callbacks=[callback],
