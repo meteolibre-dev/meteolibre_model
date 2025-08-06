@@ -98,13 +98,14 @@ class DiTCore(pl.LightningModule):
     def forward(self, x, scalar_input):
         """
         Forward pass of DiT.
-            x: (N, C, nb_timestep, H, W) tensor of spatial inputs (images or latent representations of images)
+            x: (N, nb_timestep, C, H, W) tensor of spatial inputs (images or latent representations of images)
             scalar: (N, condition_size) tensor of diffusion timesteps (or any other scalar input)
         """
         x_scalar = self.mlp(scalar_input)
 
-        x = einops.rearrange(x, "b c n h w -> (b c) n h w")
+        x = einops.rearrange(x, "b c n h w -> (b n) c h w")
 
+        breakpoint()
         x = self.x_embedder(x)
 
         # resize temporals
