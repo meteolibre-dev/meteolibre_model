@@ -110,15 +110,28 @@ class MeteoLibreDataset(torch.utils.data.dataset.Dataset):
     def __init__(self, directory):
         super().__init__()
 
-        self.directory = directory
+        if isinstance(directory, str):
+            directories = [directory]
+        else:
+            directories = directory
+        
+        self.directories = directories
 
-        # index reader
-        self.json_path = os.path.join(self.directory, "index.json")
-        self.index_data = load_jsonl_to_dataframe(self.json_path)
+        all_indexes = []
+        for d in directories:
+            json_path = os.path.join(d, "index.json")
+            index_data = load_jsonl_to_dataframe(json_path)
 
-        for columns in self.index_data.columns:
-            if "file" in columns:
-                self.index_data[columns] = directory + self.index_data[columns].str[19:]
+            if index_data is not None:
+                for column in index_data.columns:
+                    if "file" in column:
+                        index_data[column] = d + index_data[column].str[19:]
+                all_indexes.append(index_data)
+
+        if all_indexes:
+            self.index_data = pd.concat(all_indexes, ignore_index=True)
+        else:
+            self.index_data = pd.DataFrame()
 
     def __len__(self):
         return len(self.index_data)
