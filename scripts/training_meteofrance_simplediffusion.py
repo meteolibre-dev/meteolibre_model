@@ -26,6 +26,7 @@ import torch._dynamo
 torch._dynamo.config.suppress_errors = True
 
 PATHDATA = "/workspace/data/hf_dataset/"
+PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/"]
 
 def init_dataset():
     dataset = MeteoLibreDataset(directory=PATHDATA)
@@ -43,7 +44,7 @@ if __name__ == "__main__":
 
     train_dataloader = DataLoader(
         train_dataset,
-        batch_size=8,
+        batch_size=16,
         shuffle=True,
         num_workers=16,
     )  # 
@@ -56,22 +57,24 @@ if __name__ == "__main__":
         test_dataloader=val_dataloader,
         dir_save="./",
         parametrization="velocity",
+        schedule="cosine",
     )
 
-    #model.compile()
+    # speed 1.24 iteration second for batch 8
+    model.compile()
 
     callback = ModelCheckpoint(
         every_n_epochs=1,
         save_last=True,
-        dirpath="models/meteolibre_vae_ltx/",
+        dirpath="models/meteolibre_simplediffusion/",
         save_weights_only=True,
     )
 
-    logger = TensorBoardLogger("tb_logs/", name="meteolibre_meteofrance_asft")
+    logger = TensorBoardLogger("tb_logs/", name="meteolibre_meteofrance_simplediffusion")
     #logger = WandbLogger(project="meteolibre_meteofrance_model_vae")
 
     trainer = pl.Trainer(
-        max_time={"hours": 4},
+        max_time={"hours": 50},
         logger=logger,
         accumulate_grad_batches=2,
         #fast_dev_run=True,

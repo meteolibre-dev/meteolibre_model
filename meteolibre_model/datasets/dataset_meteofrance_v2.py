@@ -83,7 +83,7 @@ def read_record(record):
         gs_data = np.load(gs)["arr_0"]
         height_data = np.load(height)["arr_0"]
         landcover_data = np.load(landcover)["arr_0"]
-        satellite_data = np.load(satellite)["arr_0"]
+        satellite_data = np.load(satellite)["arr_0"] / 65536
     except Exception as e:
         print(
             f"Error loading data from {radar_data}, {gs_data}, {height}: {e}"

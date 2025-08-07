@@ -5,6 +5,7 @@ meteolibre_model/meteolibre_model/pl_model.py
 import os
 import glob
 import wandb
+import math
 import matplotlib.pyplot as plt
 from PIL import Image
 
@@ -42,13 +43,14 @@ class Simple3DDiffusion(pl.LightningModule):
         learning_rate=1e-3,
         nb_back=4,
         nb_future=2,
-        nb_channels=13,
+        nb_channels=17,
         f_maps=64,
         shape_image=256,
         test_dataloader=None,
         dir_save="./",
         loss_type="mse",
-        parametrization="noisy",
+        parametrization="velocity",
+        schedule="cosine",
     ):
         """
         Initialize the MeteoLibrePLModel.
@@ -85,15 +87,6 @@ class Simple3DDiffusion(pl.LightningModule):
             pool_kernel_size=(1, 2, 2),
         )
 
-        self.list_dimension = [
-            0,
-            f_maps,
-            f_maps * 2,
-            f_maps * 4,
-            f_maps * 8,
-            f_maps * 16,
-        ]
-
         self.model_core = DiTCore(
             self.nb_time_step,
             hidden_size=384,
@@ -125,6 +118,7 @@ class Simple3DDiffusion(pl.LightningModule):
 
         self.loss_type = loss_type
         self.parametrization = parametrization
+        self.schedule = schedule
 
     def forward(self, x_image, x_scalar):
         """
@@ -197,6 +191,8 @@ class Simple3DDiffusion(pl.LightningModule):
         with torch.no_grad():
             radar_data = batch["radar"].unsqueeze(-1)[:, : self.nb_time_step]
             groundstation_data = batch["groundstation"][:, : self.nb_time_step]
+            
+            satellite_data = batch["satellite"][:, : self.nb_time_step].permute(0, 1, 3, 4, 2).float()
 
             groundheight = batch["ground_height"].unsqueeze(-1).unsqueeze(1).float()
             landcover = batch["landcover"].unsqueeze(1).float()
@@ -220,7 +216,7 @@ class Simple3DDiffusion(pl.LightningModule):
 
             # concat the two elements
             x_image = torch.cat(
-                (groundheight, landcover, radar_data, groundstation_data), dim=-1
+                (groundheight, landcover, radar_data, groundstation_data, satellite_data), dim=-1
             )
             x_image = x_image.permute(0, 1, 4, 2, 3)  # (N, nb_frame, C, H, W)
 
@@ -241,6 +237,14 @@ class Simple3DDiffusion(pl.LightningModule):
 
     def init_prior(self, shape_target):
         return torch.randn((shape_target)).to(self.device)
+    
+    def get_proper_schedule(self, t):
+        if self.schedule == "linear":
+            return t, torch.ones_like(t)
+        elif self.schedule == "cosine":
+            return 1. - torch.cos(math.pi / 2 * t ** 3) ** 2, (3 * torch.pi / 2) * t**2 * torch.sin(torch.pi * t**3)
+        else:
+            raise ValueError("scheduler not handle")
 
     def training_step(self, batch, batch_idx):
         """
@@ -297,7 +301,9 @@ class Simple3DDiffusion(pl.LightningModule):
         x_scalar = torch.cat([x_hour, x_minute, t[:, :, 0, 0, 0]], dim=1)
 
         # Interpolate between prior and data to get x_t
-        x_t = t * target_meteo_frames + (1 - t) * prior_image
+        schedule, schedule_deriv = self.get_proper_schedule(t)
+        
+        x_t = schedule * target_meteo_frames + (1 - schedule) * prior_image
 
         # concat x_t with x_image_back and x_ground_station_image_previous
         input_model = torch.cat([input_meteo_frames, x_t], dim=1)
@@ -314,45 +320,41 @@ class Simple3DDiffusion(pl.LightningModule):
 
             w_t = torch.clamp(w_t, min=1.0, max=3.0)
 
-            reconstruction_loss_radar = F.mse_loss(
-                pred[:, :, [5], :, :], target[:, :, [5], :, :], reduction="mean"
-            )
-            reconstruction_loss_groundstation = F.mse_loss(
-                pred[:, :, 6:, :, :][mask_groundstation],
-                target[:, :, 6:, :, :][mask_groundstation],
-                reduction="mean",
-            )
-            reconstruction_ground = F.mse_loss(
-                pred[:, :, :5, :, :], target[:, :, :5, :, :], reduction="mean"
-            )
-
 
         elif self.parametrization == "velocity":
             
             target = target_meteo_frames - prior_image
-        
-            reconstruction_loss_radar = F.mse_loss(
-                pred[:, :, [5], :, :], target[:, :, [5], :, :], reduction="mean"
-            )
-            reconstruction_loss_groundstation = F.mse_loss(
-                pred[:, :, 6:, :, :][mask_groundstation],
-                target[:, :, 6:, :, :][mask_groundstation],
-                reduction="mean",
-            )
-            reconstruction_ground = F.mse_loss(
-                pred[:, :, :5, :, :], target[:, :, :5, :, :], reduction="mean"
-            )
 
         else:
             raise ValueError("parametrization not handled")
+
+        reconstruction_loss_radar = F.mse_loss(
+            pred[:, :, [5], :, :], target[:, :, [5], :, :], reduction="mean"
+        )
+        reconstruction_loss_groundstation = F.mse_loss(
+            pred[:, :, 6:13, :, :][mask_groundstation],
+            target[:, :, 6:13, :, :][mask_groundstation],
+            reduction="mean",
+        )
+        
+        reconstruction_loss_satellite = F.mse_loss(
+            pred[:, :, 13:, :, :],
+            target[:, :, 13:, :, :],
+            reduction="mean",
+        )
+        
+        reconstruction_ground = F.mse_loss(
+            pred[:, :, :5, :, :], target[:, :, :5, :, :], reduction="mean"
+        )
 
         # Loss is MSE between predicted and target velocity fields
         # loss = self.criterion(pred, prior_image)
         # loss = w_t * loss  # ponderate loss
         reconstruction_loss = (
-            reconstruction_loss_radar
+            reconstruction_loss_radar * 3.
             + reconstruction_loss_groundstation * 0.3
-            + reconstruction_ground * 0.1
+            + reconstruction_ground * 0.01 
+            + reconstruction_loss_satellite * 0.5
         )
 
         # logging data
@@ -360,6 +362,7 @@ class Simple3DDiffusion(pl.LightningModule):
         self.log("reconstruction_loss_radar", reconstruction_loss_radar)
         self.log("reconstruction_loss_groundstation", reconstruction_loss_groundstation)
         self.log("reconstruction_loss_ground_info", reconstruction_ground)
+        self.log("reconstruction_loss_satellite", reconstruction_loss_satellite)
 
         return reconstruction_loss
 
@@ -420,14 +423,15 @@ class Simple3DDiffusion(pl.LightningModule):
                 
                 velocity = 1 / (t + 1e-4) * (tmp_noise - pred)
 
-                tmp_noise = tmp_noise + velocity * 1.0 / nb_step
             elif self.parametrization == "velocity":
                 
                 velocity = pred
-                tmp_noise = tmp_noise + velocity * 1.0 / nb_step
-            
+                
             else:
                 raise ValueError("parametrization not handled")
+
+            schedule, schedule_deriv = self.get_proper_schedule(torch.tensor(t))
+            tmp_noise = tmp_noise + schedule_deriv.item() * velocity * 1.0 / nb_step
 
         return tmp_noise, target_meteo_frames, input_meteo_frames
 
@@ -438,7 +442,7 @@ class Simple3DDiffusion(pl.LightningModule):
 
         with torch.no_grad():
             result, target_radar_frames, input_radar_frames = self.generate_one(
-                nb_batch=1, nb_step=100
+                nb_batch=1, nb_step=200
             )
 
             full_image_result = torch.cat([input_radar_frames, result], dim=1)
@@ -474,7 +478,7 @@ class Simple3DDiffusion(pl.LightningModule):
             )
 
             plt.figure(figsize=(20, 20))
-            plt.imshow(result[0, i, 0, :, :], vmin=-1, vmax=2)
+            plt.imshow(result[0, i, -1, :, :], vmin=-1, vmax=2)
             plt.colorbar()
 
             plt.savefig(fname, bbox_inches="tight", pad_inches=0)
@@ -497,7 +501,7 @@ class Simple3DDiffusion(pl.LightningModule):
         )
 
         plt.figure(figsize=(20, 20))
-        plt.imshow(radar_image[0, 0, 0, :, :], vmin=-0.5, vmax=2)
+        plt.imshow(radar_image[0, 0, -1, :, :], vmin=-0.5, vmax=2)
         plt.colorbar()
 
         plt.savefig(fname, bbox_inches="tight", pad_inches=0)
