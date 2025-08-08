@@ -62,7 +62,7 @@ if __name__ == "__main__":
     )
 
     #   
-    model.compile()
+    # model.compile()
 
     callback = ModelCheckpoint(
         every_n_epochs=1,

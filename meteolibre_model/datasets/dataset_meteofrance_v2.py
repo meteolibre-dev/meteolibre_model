@@ -150,7 +150,7 @@ class MeteoLibreDataset(torch.utils.data.dataset.Dataset):
             else:
                 element.append(True)
             
-        index_data = index_data[element]
+        self.index_data = self.index_data[element].reset_index()
 
     def __len__(self):
         return len(self.index_data)

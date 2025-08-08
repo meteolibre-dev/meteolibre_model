@@ -42,7 +42,7 @@ class Simple3DDiffusion(pl.LightningModule):
     def __init__(
         self,
         condition_size=3,
-        learning_rate=1e-3,
+        learning_rate=3e-4,
         nb_back=4,
         nb_future=2,
         nb_channels=17,
@@ -286,12 +286,7 @@ class Simple3DDiffusion(pl.LightningModule):
         # Prior sample (simple Gaussian noise) - you can refine this prior
         prior_image = self.init_prior(target_meteo_frames.shape)
 
-        # Time variable for Rectified Flow - sample uniformly
-        t = (
-            torch.rand(batch_size, 1, 1, 1, 1)
-            .type_as(target_meteo_frames)
-            .to(target_meteo_frames.device)
-        )  # (B, 1)
+        t = stratified_uniform_sample(batch_size, device=self.device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
 
         # we create a scalar value to condition the model on time stamp
         # and hours
@@ -375,8 +370,8 @@ class Simple3DDiffusion(pl.LightningModule):
         Returns:
             torch.optim.Optimizer: Adam optimizer.
         """
-        # optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-        optimizer = ForeachSOAP(self.parameters(), lr=self.learning_rate, foreach=False)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        #optimizer = ForeachSOAP(self.parameters(), lr=self.learning_rate, foreach=False)
         return optimizer
 
     @torch.no_grad()
@@ -680,3 +675,45 @@ def create_gif_pillow(image_paths, output_path, duration=100):
         print(f"GIF created successfully at {output_path}")
     else:
         print("No valid images found to create GIF.")
+
+
+
+def stratified_uniform_sample(batch_size, device=None, dtype=torch.float32):
+    """
+    Generates stratified uniform samples between 0 and 1.
+
+    Divides the [0, 1] interval into `batch_size` strata and samples
+    one point uniformly from each stratum.
+
+    Args:
+        batch_size (int): The number of samples to generate (and the number of strata).
+        device (torch.device, optional): The desired device for the tensor.
+                                        Defaults to None (CPU).
+        dtype (torch.dtype, optional): The desired data type for the tensor.
+                                        Defaults to torch.float32.
+
+
+    Returns:
+        torch.Tensor: A tensor of shape (batch_size,) containing the stratified samples.
+                    Each sample t_i is guaranteed to be within the interval
+                    [i/batch_size, (i+1)/batch_size).
+    """
+    if device is None:
+        device = torch.device("cpu")  # Default to CPU if no device is specified
+
+    # 1. Create the boundaries for the strata.
+    #    We generate points 0, 1, ..., batch_size-1
+    t = torch.arange(batch_size, device=device, dtype=dtype)
+
+    # 2. Generate uniform random offsets within [0, 1) for each stratum.
+    #    These offsets determine where within each stratum the sample is drawn.
+    offsets = torch.rand(batch_size, device=device, dtype=dtype)
+
+    # 3. Calculate the samples.
+    #    For each i from 0 to batch_size-1:
+    #    - The i-th stratum is [i/batch_size, (i+1)/batch_size).
+    #    - We calculate (i + offset_i) / batch_size.
+    #    - Since offset_i is in [0, 1), this value falls within the i-th stratum.
+    time_stamps = (t + offsets) / batch_size
+
+    return time_stamps
