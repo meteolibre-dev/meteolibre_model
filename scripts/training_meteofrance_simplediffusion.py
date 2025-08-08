@@ -46,7 +46,7 @@ if __name__ == "__main__":
         train_dataset,
         batch_size=16,
         shuffle=True,
-        num_workers=16,
+        num_workers=20,
     )  # 
     
     val_dataloader = DataLoader(
@@ -56,11 +56,11 @@ if __name__ == "__main__":
     model = Simple3DDiffusion(
         test_dataloader=val_dataloader,
         dir_save="./",
-        parametrization="velocity",
-        schedule="cosine",
+        parametrization="noisy",
+        schedule="linear",
     )
 
-    # speed 1.24 iteration second for batch 8
+    #   
     model.compile()
 
     callback = ModelCheckpoint(
@@ -83,6 +83,7 @@ if __name__ == "__main__":
         gradient_clip_val=1.0,
         log_every_n_steps=5,
         enable_checkpointing=True,
+        precision='16-mixed',
     )  # fast_dev_run=True for quick debugging
 
     trainer.fit(
