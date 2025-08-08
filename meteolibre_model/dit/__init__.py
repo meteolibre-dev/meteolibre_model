@@ -1,0 +1,1 @@
+from .model_meteofrance_simplediffusion import Simple3DDiffusionModel
