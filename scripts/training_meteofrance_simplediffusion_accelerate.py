@@ -9,6 +9,9 @@ from accelerate import Accelerator
 from safetensors.torch import save_file
 from huggingface_hub import HfApi
 from tqdm import tqdm
+import os
+import torchvision
+import einops
 
 from meteolibre_model.datasets.dataset_meteofrance_v2 import MeteoLibreDataset
 from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
@@ -24,6 +27,27 @@ GRADIENT_CLIP_VAL = 1.0
 LOG_EVERY_N_STEPS = 5
 SAVE_EVERY_N_EPOCHS = 1
 MODEL_DIR = "models/meteolibre_simplediffusion_accelerate/"
+IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
+
+def log_sample_image(model, batch, step, accelerator):
+    os.makedirs(IMAGE_LOG_DIR, exist_ok=True)
+    
+    with torch.no_grad():
+        x_image, _, _, _ = model.module.prepare_target(batch, accelerator.device)
+        input_meteo_frames = x_image[:, :model.module.nb_back]
+        
+        x_hour = batch["hour"].clone().detach().float().unsqueeze(1)
+        x_minute = batch["minute"].clone().detach().float().unsqueeze(1)
+        
+        sample = model.module.sample(input_meteo_frames, x_hour, x_minute)
+        
+        # Assuming the radar channel is at index 5
+        sample_radar = sample[0, :, 5, :, :]
+        sample_radar = einops.rearrange(sample_radar, 't h w -> t 1 h w')
+        
+        save_path = os.path.join(IMAGE_LOG_DIR, f"sample_step_{step}.png")
+        torchvision.utils.save_image(sample_radar, save_path, normalize=True)
+        accelerator.print(f"Saved sample image to {save_path}")
 
 def main():
     accelerator = Accelerator(
@@ -44,7 +68,7 @@ def main():
     # Initialize Model
     model = Simple3DDiffusionModel(
         parametrization="velocity",
-        schedule="linear",
+        schedule="shifted_cosine",
     )
 
     # Initialize Optimizer
@@ -72,10 +96,15 @@ def main():
                 optimizer.step()
                 optimizer.zero_grad()
 
-            if (step + 1) % LOG_EVERY_N_STEPS == 0:
+            global_step = epoch * len(train_dataloader) + step
+            if (global_step + 1) % LOG_EVERY_N_STEPS == 0:
                 accelerator.print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{step+1}/{len(train_dataloader)}], Loss: {loss.item():.4f}")
                 for loss_name, loss_value in losses.items():
-                    accelerator.log({loss_name: loss_value.item()}, step=epoch * len(train_dataloader) + step)
+                    accelerator.log({loss_name: loss_value.item()}, step=global_step)
+                
+            # log image at the epoch end
+            log_sample_image(model, batch, global_step, accelerator)
+                
 
         if (epoch + 1) % SAVE_EVERY_N_EPOCHS == 0:
             accelerator.wait_for_everyone()
@@ -83,6 +112,8 @@ def main():
             save_path = f"{MODEL_DIR}epoch_{epoch+1}.safetensors"
             save_file(unwrapped_model.state_dict(), save_path)
             accelerator.print(f"Model saved to {save_path}")
+            
+            
 
     accelerator.end_training()
     print("Training finished!")

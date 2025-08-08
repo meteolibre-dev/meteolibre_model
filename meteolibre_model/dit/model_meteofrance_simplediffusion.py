@@ -315,9 +315,9 @@ class Simple3DDiffusionModel(nn.Module):
         """
         device = input_meteo_frames.device
         batch_size = input_meteo_frames.shape[0]
-        
+
         target_shape = (batch_size, self.nb_future, self.nb_channels, self.shape_image, self.shape_image)
-        
+
         z_t = torch.randn(target_shape, device=device)
 
         steps = torch.linspace(1.0, 0.0, sampling_steps + 1, device=device)
