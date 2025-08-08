@@ -25,6 +25,8 @@ from heavyball import ForeachSOAP
 from pytorch3dunet.unet3d.model import ResidualUNet3D
 from meteolibre_model.dit.dit_core import DiTCore
 
+from meteolibre_model.datasets.dataset_meteofrance_v2 import STATISTIC_SATELLITE_MEAN, STATISTIC_SATELLITE_STD
+
 DEFAULT_GS_VALUE = -4.0
 
 
@@ -86,12 +88,15 @@ class Simple3DDiffusion(pl.LightningModule):
             conv_padding=1,
             pool_kernel_size=(1, 2, 2),
         )
+        
+        dit_hidden_size = 768
+        dit_heads = 12
 
         self.model_core = DiTCore(
             self.nb_time_step,
-            hidden_size=384,
+            hidden_size=dit_hidden_size,
             depth=12,
-            num_heads=6,
+            num_heads=dit_heads,
             patch_size=2,
             out_channels=1024,
             in_channels=1024,
@@ -103,7 +108,7 @@ class Simple3DDiffusion(pl.LightningModule):
             nn.SiLU(),
             nn.Linear(
                 384,
-                sum([self.f_maps * 2**i for i in range(self.num_levels)]),
+                2 * sum([self.f_maps * 2**i for i in range(self.num_levels)]),
                 bias=True,
             ),
         )
@@ -137,32 +142,22 @@ class Simple3DDiffusion(pl.LightningModule):
 
         film_params = self.film_layer(x_scalar)
 
+
+        sum_ch = sum([self.f_maps * 2**i for i in range(self.num_levels)])
+        film_params = self.film_layer(x_scalar)
+        gamma_params = film_params[:, :sum_ch]
+        beta_params = film_params[:, sum_ch:]
+        offset = 0
+        
         encoders_features = []
         for idx, encoder in enumerate(self.model_encoder_decoder.encoders):
             x = encoder(x)
 
-            # we apply the film layer to x
-            if idx != 0:
-                x = x + (
-                    1.0
-                    + film_params[
-                        :,
-                        (self.f_maps * 2**(idx - 1)) : (
-                            self.f_maps * 2 ** (idx) + self.f_maps * 2**(idx - 1)
-                        ),
-                    ]
-                    .unsqueeze(-1)
-                    .unsqueeze(-1)
-                    .unsqueeze(-1)
-                )
-            else:
-                x = x + (
-                    1.0
-                    + film_params[:, : self.f_maps]
-                    .unsqueeze(-1)
-                    .unsqueeze(-1)
-                    .unsqueeze(-1)
-                )
+            ch = self.f_maps * (2 ** idx)
+            gamma = gamma_params[:, offset:offset + ch].unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            beta = beta_params[:, offset:offset + ch].unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            x = (1. + gamma) * x + beta
+            offset += ch
 
             # reverse the encoder outputs to be aligned with the decoder
             encoders_features.insert(0, x)
@@ -193,6 +188,13 @@ class Simple3DDiffusion(pl.LightningModule):
             groundstation_data = batch["groundstation"][:, : self.nb_time_step]
             
             satellite_data = batch["satellite"][:, : self.nb_time_step].permute(0, 1, 3, 4, 2).float()
+            
+            # global statistic normalization for satellite
+            stat_sat_mean = STATISTIC_SATELLITE_MEAN.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0).to(self.device)
+            stat_sat_std = STATISTIC_SATELLITE_STD.unsqueeze(0).unsqueeze(0).unsqueeze(0).unsqueeze(0).to(self.device)
+            
+            satellite_data = (satellite_data - stat_sat_mean) / stat_sat_std
+            
 
             groundheight = batch["ground_height"].unsqueeze(-1).unsqueeze(1).float()
             landcover = batch["landcover"].unsqueeze(1).float()
@@ -421,7 +423,11 @@ class Simple3DDiffusion(pl.LightningModule):
 
             if self.parametrization == "noisy":
                 
-                velocity = 1 / (t + 1e-4) * (tmp_noise - pred)
+                # error accorinf to grok
+                pred_noise = pred
+                velocity = (tmp_noise - pred_noise) / (1 - t + 1e-4)
+                
+                #velocity = 1 / (t + 1e-4) * (tmp_noise - pred) 
 
             elif self.parametrization == "velocity":
                 

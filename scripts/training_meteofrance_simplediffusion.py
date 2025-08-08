@@ -47,6 +47,7 @@ if __name__ == "__main__":
         batch_size=16,
         shuffle=True,
         num_workers=20,
+        pin_memory=True,
     )  # 
     
     val_dataloader = DataLoader(
@@ -56,7 +57,7 @@ if __name__ == "__main__":
     model = Simple3DDiffusion(
         test_dataloader=val_dataloader,
         dir_save="./",
-        parametrization="noisy",
+        parametrization="velocity",
         schedule="linear",
     )
 

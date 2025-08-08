@@ -1,2 +1,2 @@
 scikit-image
-git+https://github.com/wolny/pytorch-3dunet.git
+git+https://github.com/Forbu/pytorch-3dunet.git
