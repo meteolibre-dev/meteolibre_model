@@ -256,7 +256,12 @@ class Simple3DDiffusionModel(nn.Module):
         loss_tensor = weight * (eps_pred - target) ** 2
 
         loss_radar = loss_tensor[:, :, [5], :, :].mean()
-        loss_groundstation = loss_tensor[:, :, 6:13, :, :][mask_groundstation].mean()
+
+        if mask_groundstation.sum() != 0:
+            loss_groundstation = loss_tensor[:, :, 6:13, :, :][mask_groundstation].mean()
+        else:
+            loss_groundstation = torch.tensor(0, device=loss_tensor.device)
+            
         loss_satellite = loss_tensor[:, :, 13:, :, :].mean()
         loss_ground = loss_tensor[:, :, :5, :, :].mean()
 
@@ -266,6 +271,7 @@ class Simple3DDiffusionModel(nn.Module):
             + loss_ground * 0.01
             + loss_satellite * 0.5
         )
+
 
         losses = {
             "total_loss": total_loss,

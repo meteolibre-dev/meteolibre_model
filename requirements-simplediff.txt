@@ -1,2 +1,3 @@
 scikit-image
 git+https://github.com/Forbu/pytorch-3dunet.git
+accelerate

@@ -1,10 +1,16 @@
 """
 Script for module training using accelerate
 """
+import sys
+import os
+sys.path.insert(0, "/teamspace/studios/this_studio/meteolibre_model/")
+
 
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
+from heavyball import ForeachSOAP
+
 from accelerate import Accelerator
 from safetensors.torch import save_file
 from huggingface_hub import HfApi
@@ -17,8 +23,9 @@ from meteolibre_model.datasets.dataset_meteofrance_v2 import MeteoLibreDataset
 from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
 
 # Configuration
-PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/"]
-BATCH_SIZE = 16
+#PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/"]
+PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
+BATCH_SIZE = 2
 LEARNING_RATE = 2e-4
 NUM_WORKERS = 20
 NUM_EPOCHS = 100
@@ -33,13 +40,13 @@ def log_sample_image(model, batch, step, accelerator):
     os.makedirs(IMAGE_LOG_DIR, exist_ok=True)
     
     with torch.no_grad():
-        x_image, _, _, _ = model.module.prepare_target(batch, accelerator.device)
-        input_meteo_frames = x_image[:, :model.module.nb_back]
+        x_image, _, _, _ = model.prepare_target(batch, accelerator.device)
+        input_meteo_frames = x_image[:, :model.nb_back]
         
         x_hour = batch["hour"].clone().detach().float().unsqueeze(1)
         x_minute = batch["minute"].clone().detach().float().unsqueeze(1)
         
-        sample = model.module.sample(input_meteo_frames, x_hour, x_minute)
+        sample = model.sample(input_meteo_frames, x_hour, x_minute)
         
         # Assuming the radar channel is at index 5
         sample_radar = sample[0, :, 5, :, :]
@@ -53,7 +60,11 @@ def main():
     accelerator = Accelerator(
         mixed_precision="fp16",
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
+        log_with="tensorboard", project_dir="."
     )
+
+    hps = {"batch_size": BATCH_SIZE, "learning_rate": LEARNING_RATE}
+    accelerator.init_trackers("tb_simplediffusion", config=hps)
 
     # Initialize Dataset and DataLoader
     dataset = MeteoLibreDataset(directory=PATHDATA)
@@ -72,7 +83,8 @@ def main():
     )
 
     # Initialize Optimizer
-    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
+    #optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
+    optimizer = ForeachSOAP(model.parameters(), lr=LEARNING_RATE, warmup_steps=100)
 
     # Prepare for training with accelerate
     model, optimizer, train_dataloader = accelerator.prepare(
@@ -83,7 +95,7 @@ def main():
     for epoch in range(NUM_EPOCHS):
         for step, batch in enumerate(tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}")):
             with accelerator.accumulate(model):
-                losses = model.module.compute_loss(batch, accelerator.device)
+                losses = model.compute_loss(batch, accelerator.device)
                 loss = losses["total_loss"]
                 
                 if torch.isnan(loss):
@@ -102,9 +114,9 @@ def main():
                 for loss_name, loss_value in losses.items():
                     accelerator.log({loss_name: loss_value.item()}, step=global_step)
                 
-            # log image at the epoch end
-            log_sample_image(model, batch, global_step, accelerator)
-                
+        # log image at the epoch end
+        log_sample_image(model, batch, global_step, accelerator)
+            
 
         if (epoch + 1) % SAVE_EVERY_N_EPOCHS == 0:
             accelerator.wait_for_everyone()
