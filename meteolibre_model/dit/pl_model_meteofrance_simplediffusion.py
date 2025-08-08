@@ -12,10 +12,12 @@ from PIL import Image
 from mpmath.libmp import prec_to_dps
 
 import torch
+import torchmetrics
 import torch.nn as nn
 import torch.nn.functional as F
 import einops
 from torch.optim import optimizer
+from torch.optim.lr_scheduler import LambdaLR
 
 import lightning.pytorch as pl
 
@@ -42,7 +44,7 @@ class Simple3DDiffusion(pl.LightningModule):
     def __init__(
         self,
         condition_size=3,
-        learning_rate=3e-4,
+        learning_rate=2e-4,
         nb_back=4,
         nb_future=2,
         nb_channels=17,
@@ -53,6 +55,7 @@ class Simple3DDiffusion(pl.LightningModule):
         loss_type="mse",
         parametrization="velocity",
         schedule="cosine",
+        warmup_steps=200,
     ):
         """
         Initialize the MeteoLibrePLModel.
@@ -124,6 +127,12 @@ class Simple3DDiffusion(pl.LightningModule):
         self.loss_type = loss_type
         self.parametrization = parametrization
         self.schedule = schedule
+        self.warmup_steps = warmup_steps
+
+        self.val_mse_radar = torchmetrics.MeanSquaredError()
+        self.val_mse_groundstation = torchmetrics.MeanSquaredError()
+        self.val_mse_satellite = torchmetrics.MeanSquaredError()
+        self.val_mse_ground = torchmetrics.MeanSquaredError()
 
     def forward(self, x_image, x_scalar):
         """
@@ -347,7 +356,7 @@ class Simple3DDiffusion(pl.LightningModule):
         # loss = self.criterion(pred, prior_image)
         # loss = w_t * loss  # ponderate loss
         reconstruction_loss = (
-            reconstruction_loss_radar * 3.
+            reconstruction_loss_radar * 1.
             + reconstruction_loss_groundstation * 0.3
             + reconstruction_ground * 0.01 
             + reconstruction_loss_satellite * 0.5
@@ -360,6 +369,10 @@ class Simple3DDiffusion(pl.LightningModule):
         self.log("reconstruction_loss_ground_info", reconstruction_ground)
         self.log("reconstruction_loss_satellite", reconstruction_loss_satellite)
 
+        # if reconstruction_loss is nan we just return a zero tensor
+        if torch.isnan(reconstruction_loss).any():
+            return torch.zeros_like(reconstruction_loss)
+
         return reconstruction_loss
 
 
@@ -370,9 +383,26 @@ class Simple3DDiffusion(pl.LightningModule):
         Returns:
             torch.optim.Optimizer: Adam optimizer.
         """
-        optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
-        #optimizer = ForeachSOAP(self.parameters(), lr=self.learning_rate, foreach=False)
-        return optimizer
+        
+        def lr_lambda(current_step: int):
+            """
+            Defines the learning rate multiplier based on the current step.
+            - During warmup, the learning rate increases linearly from 0 to 1.
+            - After warmup, the learning rate is constant (multiplier is 1).
+            """
+            if current_step < self.warmup_steps:
+                # Linear ramp-up
+                return float(current_step) / float(max(1, self.warmup_steps))
+            # Constant learning rate after warmup
+            return 1.0
+
+        #optimizer = torch.optim.AdamW(self.parameters(), lr=self.learning_rate)
+        optimizer = ForeachSOAP(self.parameters(), lr=self.learning_rate, foreach=False, warmup_steps = self.warmup_steps)
+
+        # LambdaLR creates a scheduler that multiplies the base LR by the output of our lambda function.
+        #scheduler = LambdaLR(optimizer, lr_lambda)
+
+        return optimizer #{"optimizer": optimizer, "lr_scheduler": scheduler}
 
     @torch.no_grad()
     def generate_one(self, nb_batch=1, nb_step=100, null_value=False):
@@ -433,7 +463,7 @@ class Simple3DDiffusion(pl.LightningModule):
             schedule, schedule_deriv = self.get_proper_schedule(torch.tensor(t))
             tmp_noise = tmp_noise + schedule_deriv.item() * velocity * 1.0 / nb_step
 
-        return tmp_noise, target_meteo_frames, input_meteo_frames
+        return tmp_noise, target_meteo_frames, input_meteo_frames, mask_groundstation
 
     # on epoch end of training
     def on_train_epoch_end(self):
@@ -441,14 +471,58 @@ class Simple3DDiffusion(pl.LightningModule):
         self.eval()
 
         with torch.no_grad():
-            result, target_radar_frames, input_radar_frames = self.generate_one(
-                nb_batch=1, nb_step=200
+            (
+                result,
+                target_meteo_frames,
+                input_radar_frames,
+                mask_groundstation,
+            ) = self.generate_one(nb_batch=1, nb_step=200)
+
+            # Update metrics
+            # ground info
+            self.val_mse_ground.update(
+                result[:, :, :5, :, :].flatten(), target_meteo_frames[:, :, :5, :, :].flatten()
             )
+            # radar
+            self.val_mse_radar.update(
+                result[:, :, [5], :, :].flatten(), target_meteo_frames[:, :, [5], :, :].flatten()
+            )
+            # groundstation
+            mask_groundstation_expanded = mask_groundstation.expand_as(
+                result[:, :, 6:13, :, :]
+            )
+            self.val_mse_groundstation.update(
+                result[:, :, 6:13, :, :][mask_groundstation_expanded].flatten(),
+                target_meteo_frames[:, :, 6:13, :, :][mask_groundstation_expanded].flatten(),
+            )
+
+            # satellite
+            self.val_mse_satellite.update(
+                result[:, :, 13:, :, :].flatten(), target_meteo_frames[:, :, 13:, :, :].flatten()
+            )
+
+            # Log metrics
+            self.log("val_mse_radar", self.val_mse_radar.compute(), on_epoch=True)
+            self.log(
+                "val_mse_groundstation",
+                self.val_mse_groundstation.compute(),
+                on_epoch=True,
+            )
+            self.log(
+                "val_mse_satellite", self.val_mse_satellite.compute(), on_epoch=True
+            )
+            self.log("val_mse_ground", self.val_mse_ground.compute(), on_epoch=True)
+
+            # Reset metrics for next epoch
+            self.val_mse_radar.reset()
+            self.val_mse_groundstation.reset()
+            self.val_mse_satellite.reset()
+            self.val_mse_ground.reset()
 
             full_image_result = torch.cat([input_radar_frames, result], dim=1)
 
             full_image_target = torch.cat(
-                [input_radar_frames, target_radar_frames], dim=1
+                [input_radar_frames, target_meteo_frames], dim=1
             )
 
             radar_image_result = full_image_result.cpu().numpy()

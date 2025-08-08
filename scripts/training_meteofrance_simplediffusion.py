@@ -75,10 +75,10 @@ if __name__ == "__main__":
     #logger = WandbLogger(project="meteolibre_meteofrance_model_vae")
 
     trainer = pl.Trainer(
-        max_time={"hours": 50},
+        max_time={"hours": 100},
         logger=logger,
         accumulate_grad_batches=2,
-        #fast_dev_run=True,
+        fast_dev_run=True,
         #accelerator="cpu", # debug
         callbacks=[callback],
         gradient_clip_val=1.0,
