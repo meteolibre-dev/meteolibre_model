@@ -12,11 +12,17 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import einops
+from torch.special import expm1
 
 from pytorch3dunet.unet3d.model import ResidualUNet3D
 from meteolibre_model.dit.dit_core import DiTCore
 
 from meteolibre_model.datasets.dataset_meteofrance_v2 import STATISTIC_SATELLITE_MEAN, STATISTIC_SATELLITE_STD
+
+
+def log(t, eps=1e-20):
+    return torch.log(t.clamp(min=eps))
+
 
 class Simple3DDiffusionModel(nn.Module):
     """
@@ -33,6 +39,8 @@ class Simple3DDiffusionModel(nn.Module):
         shape_image=256,
         parametrization="velocity",
         schedule="cosine",
+        noise_d=64,
+        image_d=256,
     ):
         """
         Initialize the Simple3DDiffusionModel.
@@ -85,6 +93,8 @@ class Simple3DDiffusionModel(nn.Module):
         self.shape_image = shape_image
         self.parametrization = parametrization
         self.schedule = schedule
+        self.noise_d = noise_d
+        self.image_d = image_d
 
     def forward(self, x_image, x_scalar):
         """
@@ -182,11 +192,20 @@ class Simple3DDiffusionModel(nn.Module):
     def init_prior(self, shape_target, device):
         return torch.randn((shape_target)).to(device)
     
-    def get_proper_schedule(self, t):
-        if self.schedule == "linear":
-            return t, torch.ones_like(t)
-        elif self.schedule == "cosine":
-            return 1. - torch.cos(math.pi / 2 * t ** 3) ** 2, (3 * torch.pi / 2) * t**2 * torch.sin(torch.pi * t**3)
+    def logsnr_schedule_cosine(self, t, logsnr_min=-15, logsnr_max=15):
+        t_min = math.atan(math.exp(-0.5 * logsnr_max))
+        t_max = math.atan(math.exp(-0.5 * logsnr_min))
+        return -2 * log(torch.tan(t_min + t * (t_max - t_min)))
+
+    def logsnr_schedule_cosine_shifted(self, t):
+        logsnr_t = self.logsnr_schedule_cosine(t)
+        return logsnr_t + 2 * math.log(self.noise_d / self.image_d)
+
+    def get_logsnr(self, t):
+        if self.schedule == "cosine":
+            return self.logsnr_schedule_cosine(t)
+        elif self.schedule == "shifted_cosine":
+            return self.logsnr_schedule_cosine_shifted(t)
         else:
             raise ValueError("scheduler not handle")
 
@@ -197,43 +216,57 @@ class Simple3DDiffusionModel(nn.Module):
         target_meteo_frames = x_image[:, self.nb_back : (self.nb_back + self.nb_future)]
         input_meteo_frames = x_image[:, : self.nb_back]
 
-        prior_image = self.init_prior(target_meteo_frames.shape, device)
+        eps_t = self.init_prior(target_meteo_frames.shape, device)
 
-        t = stratified_uniform_sample(batch_size, device=device).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+        t = stratified_uniform_sample(batch_size, device=device)
+
+        logsnr_t = self.get_logsnr(t)
+        alpha_t = torch.sqrt(torch.sigmoid(logsnr_t))
+        sigma_t = torch.sqrt(torch.sigmoid(-logsnr_t))
+
+        alpha_t = alpha_t.view(-1, 1, 1, 1, 1)
+        sigma_t = sigma_t.view(-1, 1, 1, 1, 1)
+
+        x_t = alpha_t * target_meteo_frames + sigma_t * eps_t
+        input_model = torch.cat([input_meteo_frames, x_t], dim=1)
 
         x_hour = batch["hour"].clone().detach().float().unsqueeze(1)
         x_minute = batch["minute"].clone().detach().float().unsqueeze(1)
-        x_scalar = torch.cat([x_hour, x_minute, t[:, :, 0, 0, 0]], dim=1)
-
-        schedule, _ = self.get_proper_schedule(t)
-        x_t = schedule * target_meteo_frames + (1 - schedule) * prior_image
-        input_model = torch.cat([input_meteo_frames, x_t], dim=1)
+        logsnr_t_unsq = logsnr_t.unsqueeze(1)
+        x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq], dim=1)
 
         pred = self.forward(input_model, x_scalar)
 
-        if self.parametrization == "noisy":
-            target = prior_image
-        elif self.parametrization == "velocity":
-            target = target_meteo_frames - prior_image
+        if self.parametrization == "velocity":
+            eps_pred = sigma_t * x_t + alpha_t * pred
+            target = eps_t
+        elif self.parametrization == "noisy":
+            eps_pred = pred
+            target = eps_t
         else:
             raise ValueError("parametrization not handled")
 
-        loss_radar = F.mse_loss(pred[:, :, [5], :, :], target[:, :, [5], :, :], reduction="mean")
-        loss_groundstation = F.mse_loss(
-            pred[:, :, 6:13, :, :][mask_groundstation],
-            target[:, :, 6:13, :, :][mask_groundstation],
-            reduction="mean",
-        )
-        loss_satellite = F.mse_loss(pred[:, :, 13:, :, :], target[:, :, 13:, :, :], reduction="mean")
-        loss_ground = F.mse_loss(pred[:, :, :5, :, :], target[:, :, :5, :, :], reduction="mean")
+        snr = torch.exp(logsnr_t).clamp(max=5)
+        if self.parametrization == "velocity":
+            weight = 1 / (1 + snr)
+        else:
+            weight = 1 / snr
+
+        weight = weight.view(-1, 1, 1, 1, 1)
+        loss_tensor = weight * (eps_pred - target) ** 2
+
+        loss_radar = loss_tensor[:, :, [5], :, :].mean()
+        loss_groundstation = loss_tensor[:, :, 6:13, :, :][mask_groundstation].mean()
+        loss_satellite = loss_tensor[:, :, 13:, :, :].mean()
+        loss_ground = loss_tensor[:, :, :5, :, :].mean()
 
         total_loss = (
             loss_radar * 1.0
             + loss_groundstation * 0.3
-            + loss_ground * 0.01 
+            + loss_ground * 0.01
             + loss_satellite * 0.5
         )
-        
+
         losses = {
             "total_loss": total_loss,
             "loss_radar": loss_radar,
@@ -243,6 +276,82 @@ class Simple3DDiffusionModel(nn.Module):
         }
 
         return losses
+
+    def clip(self, x):
+        """
+        Function to clip the input tensor x to the range [-1, 1].
+        """
+        return torch.clamp(x, -1, 1)
+
+    @torch.no_grad()
+    def ddpm_sampler_step(self, z_t, pred, logsnr_t, logsnr_s):
+        """
+        Function to perform a single step of the DDPM sampler.
+        """
+        c = -expm1(logsnr_t - logsnr_s)
+        alpha_t = torch.sqrt(torch.sigmoid(logsnr_t))
+        alpha_s = torch.sqrt(torch.sigmoid(logsnr_s))
+        sigma_t = torch.sqrt(torch.sigmoid(-logsnr_t))
+        sigma_s = torch.sqrt(torch.sigmoid(-logsnr_s))
+
+        if self.parametrization == 'velocity':
+            x_pred = alpha_t * z_t - sigma_t * pred
+        elif self.parametrization == 'noisy':
+            x_pred = (z_t - sigma_t * pred) / alpha_t
+        else:
+            raise ValueError("parametrization not handled")
+
+        x_pred = self.clip(x_pred)
+
+        mu = alpha_s * (z_t * (1 - c) / alpha_t + c * x_pred)
+        variance = (sigma_s ** 2) * c
+
+        return mu, variance
+
+    @torch.no_grad()
+    def sample(self, input_meteo_frames, x_hour, x_minute, sampling_steps=100):
+        """
+        Standard DDPM sampling procedure.
+        """
+        device = input_meteo_frames.device
+        batch_size = input_meteo_frames.shape[0]
+        
+        target_shape = (batch_size, self.nb_future, self.nb_channels, self.shape_image, self.shape_image)
+        
+        z_t = torch.randn(target_shape, device=device)
+
+        steps = torch.linspace(1.0, 0.0, sampling_steps + 1, device=device)
+
+        for i in range(sampling_steps):
+            u_t_val = steps[i]
+            u_s_val = steps[i+1]
+            
+            u_t = torch.full((batch_size,), u_t_val, device=device)
+            
+            logsnr_t = self.get_logsnr(u_t)
+            logsnr_s = self.get_logsnr(torch.full((batch_size,), u_s_val, device=device))
+
+            logsnr_t_unsq = logsnr_t.unsqueeze(1)
+            x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq], dim=1)
+            
+            input_model = torch.cat([input_meteo_frames, z_t], dim=1)
+            pred = self.forward(input_model, x_scalar)
+
+            logsnr_t = logsnr_t.view(-1, 1, 1, 1, 1)
+            logsnr_s = logsnr_s.view(-1, 1, 1, 1, 1)
+
+            mu, variance = self.ddpm_sampler_step(z_t, pred, logsnr_t, logsnr_s)
+            
+            if u_s_val > 0:
+                noise = torch.randn_like(mu)
+            else:
+                noise = 0.
+                
+            z_t = mu + noise * torch.sqrt(variance)
+
+        x_pred = self.clip(z_t)
+
+        return x_pred
 
 def create_gif_pillow(image_paths, output_path, duration=100):
     images = []
