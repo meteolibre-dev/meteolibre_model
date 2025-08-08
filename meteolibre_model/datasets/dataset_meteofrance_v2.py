@@ -12,6 +12,13 @@ from numpy.random import default_rng
 
 import torch
 
+STATISTIC_SATELLITE_MEAN = torch.tensor([0.1108, 0.1524, 0.0602, 0.1168])
+STATISTIC_SATELLITE_STD = torch.tensor([0.0839, 0.1506, 0.0383, 0.0990])
+
+
+STATISTIC_RADAR_MEAN = 0.008580314926803112
+STATISTIC_RADAR_STD = 0.1423337459564209
+
 def load_jsonl_to_dataframe(file_path):
     """
     Reads a .jsonl file line by line and loads it into a pandas DataFrame.
@@ -132,6 +139,18 @@ class MeteoLibreDataset(torch.utils.data.dataset.Dataset):
             self.index_data = pd.concat(all_indexes, ignore_index=True)
         else:
             self.index_data = pd.DataFrame()
+            
+        self.index_data.head()
+        
+        # filter not coherent element (not equal spacing)
+        element = []
+        for value in self.index_data["time_radar"].values:
+            if value[0] != 2. or  value[-1] != -2.:
+                element.append(False)
+            else:
+                element.append(True)
+            
+        index_data = index_data[element]
 
     def __len__(self):
         return len(self.index_data)

@@ -195,7 +195,6 @@ class Simple3DDiffusion(pl.LightningModule):
             
             satellite_data = (satellite_data - stat_sat_mean) / stat_sat_std
             
-
             groundheight = batch["ground_height"].unsqueeze(-1).unsqueeze(1).float()
             landcover = batch["landcover"].unsqueeze(1).float()
 
