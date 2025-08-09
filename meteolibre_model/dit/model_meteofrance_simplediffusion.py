@@ -213,6 +213,8 @@ class Simple3DDiffusionModel(nn.Module):
         x_image, _, _, mask_groundstation = self.prepare_target(batch, device)
         batch_size = x_image.shape[0]
 
+        x_image = self.clip(x_image) # ensure that images are stable between -3 and 3
+
         target_meteo_frames = x_image[:, self.nb_back : (self.nb_back + self.nb_future)]
         input_meteo_frames = x_image[:, : self.nb_back]
 
@@ -287,7 +289,7 @@ class Simple3DDiffusionModel(nn.Module):
         """
         Function to clip the input tensor x to the range [-1, 1].
         """
-        return torch.clamp(x, -1, 1)
+        return torch.clamp(x, -3, 3)
 
     @torch.no_grad()
     def ddpm_sampler_step(self, z_t, pred, logsnr_t, logsnr_s):
