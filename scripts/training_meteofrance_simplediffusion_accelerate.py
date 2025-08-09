@@ -3,8 +3,8 @@ Script for module training using accelerate
 """
 import sys
 import os
-sys.path.insert(0, "/teamspace/studios/this_studio/meteolibre_model/")
-
+import random
+sys.path.insert(0, "/workspace/meteolibre_model/")
 
 import torch
 from torch.utils.data import DataLoader
@@ -23,9 +23,9 @@ from meteolibre_model.datasets.dataset_meteofrance_v2 import MeteoLibreDataset
 from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
 
 # Configuration
-#PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/"]
-PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
-BATCH_SIZE = 2
+PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/"]
+#PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
+BATCH_SIZE = 16
 LEARNING_RATE = 2e-4
 NUM_WORKERS = 20
 NUM_EPOCHS = 100
@@ -52,8 +52,24 @@ def log_sample_image(model, batch, step, accelerator):
         sample_radar = sample[0, :, 5, :, :]
         sample_radar = einops.rearrange(sample_radar, 't h w -> t 1 h w')
         
-        save_path = os.path.join(IMAGE_LOG_DIR, f"sample_step_{step}.png")
+        save_path = os.path.join(IMAGE_LOG_DIR, f"sample_radar_step_{step}.png")
         torchvision.utils.save_image(sample_radar, save_path, normalize=True)
+        accelerator.print(f"Saved sample image to {save_path}")
+        
+        # Assuming the sat channel is at index -1
+        sample_sat = sample[0, :, -1, :, :]
+        sample_sat = einops.rearrange(sample_sat, 't h w -> t 1 h w')
+        
+        save_path = os.path.join(IMAGE_LOG_DIR, f"sample_sat_step_{step}.png")
+        torchvision.utils.save_image(sample_sat, save_path, normalize=True)
+        accelerator.print(f"Saved sample image to {save_path}")
+        
+        # Assuming the lancover channel is at index 0
+        sample_landcover = sample[0, :, 0, :, :]
+        sample_landcover = einops.rearrange(sample_landcover, 't h w -> t 1 h w')
+        
+        save_path = os.path.join(IMAGE_LOG_DIR, f"sample_landcover_step_{step}.png")
+        torchvision.utils.save_image(sample_landcover, save_path, normalize=True)
         accelerator.print(f"Saved sample image to {save_path}")
 
 def main():
@@ -64,7 +80,7 @@ def main():
     )
 
     hps = {"batch_size": BATCH_SIZE, "learning_rate": LEARNING_RATE}
-    accelerator.init_trackers("tb_simplediffusion", config=hps)
+    accelerator.init_trackers("tb_simplediffusion_" +  str(random.randint(0, 1000)), config=hps)
 
     # Initialize Dataset and DataLoader
     dataset = MeteoLibreDataset(directory=PATHDATA)
