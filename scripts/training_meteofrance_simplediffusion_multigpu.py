@@ -1,12 +1,37 @@
 """
-Script for module training using accelerate
+Script for multi-GPU module training using accelerate.
+
+To run this script in a multi-GPU setup, first configure accelerate:
+`accelerate config`
+
+Then run the script:
+`accelerate launch meteolibre_model/scripts/training_meteofrance_simplediffusion_multigpu.py`
+
+An example `accelerate` config for 2 GPUs on a single machine:
+--------------------------------------------------------------------
+compute_environment: LOCAL_MACHINE
+distributed_type: MULTI_GPU
+downcast_bf16: 'no'
+gpu_ids: all
+machine_rank: 0
+main_training_function: main
+mixed_precision: fp16
+num_machines: 1
+num_processes: 2
+rdzv_backend: static
+same_network: true
+tpu_env: []
+tpu_use_cluster: false
+tpu_use_sudo: false
+use_cpu: false
+--------------------------------------------------------------------
 """
 import sys
 import os
 import random
 
 # Add project root to sys.path
-project_root = os.path.abspath("/teamspace/studios/this_studio/meteolibre_model/")
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.insert(0, project_root)
 
 import torch
@@ -26,17 +51,17 @@ from meteolibre_model.datasets.dataset_meteofrance_v2 import MeteoLibreDataset
 from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
 
 # Configuration
-#PATHDATA = ["/workspace/data/hf_dataset"]
-PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
-BATCH_SIZE = 1
+PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/"]
+#PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
+BATCH_SIZE = 16
 LEARNING_RATE = 2e-4
-NUM_WORKERS = 5
+NUM_WORKERS = 20
 NUM_EPOCHS = 100
 GRADIENT_ACCUMULATION_STEPS = 2
 GRADIENT_CLIP_VAL = 1.0
 LOG_EVERY_N_STEPS = 5
 SAVE_EVERY_N_EPOCHS = 1
-MODEL_DIR = "models/meteolibre_simplediffusion_accelerate/"
+MODEL_DIR = "models/meteolibre_simplediffusion_multigpu/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
 
 def log_sample_image(model, batch, step, accelerator):
@@ -83,7 +108,7 @@ def main():
     )
 
     hps = {"batch_size": BATCH_SIZE, "learning_rate": LEARNING_RATE}
-    accelerator.init_trackers("tb_simplediffusion_" +  str(random.randint(0, 1000)), config=hps)
+    accelerator.init_trackers("tb_simplediffusion_multigpu_" +  str(random.randint(0, 1000)), config=hps)
 
     # Initialize Dataset and DataLoader
     dataset = MeteoLibreDataset(directory=PATHDATA)
@@ -129,20 +154,24 @@ def main():
 
             global_step = epoch * len(train_dataloader) + step
             if (global_step + 1) % LOG_EVERY_N_STEPS == 0:
-                accelerator.print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{step+1}/{len(train_dataloader)}], Loss: {loss.item():.4f}")
-                for loss_name, loss_value in losses.items():
-                    accelerator.log({loss_name: loss_value.item()}, step=global_step)
+                if accelerator.is_main_process:
+                    accelerator.print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{step+1}/{len(train_dataloader)}], Loss: {loss.item():.4f}")
+                    for loss_name, loss_value in losses.items():
+                        accelerator.log({loss_name: loss_value.item()}, step=global_step)
                 
         # log image at the epoch end
-        log_sample_image(model, batch, global_step, accelerator)
+        if accelerator.is_main_process:
+            log_sample_image(model, batch, global_step, accelerator)
             
 
         if (epoch + 1) % SAVE_EVERY_N_EPOCHS == 0:
             accelerator.wait_for_everyone()
-            unwrapped_model = accelerator.unwrap_model(model)
-            save_path = f"{MODEL_DIR}epoch_{epoch+1}.safetensors"
-            save_file(unwrapped_model.state_dict(), save_path)
-            accelerator.print(f"Model saved to {save_path}")
+            if accelerator.is_main_process:
+                unwrapped_model = accelerator.unwrap_model(model)
+                save_path = f"{MODEL_DIR}epoch_{epoch+1}.safetensors"
+                os.makedirs(MODEL_DIR, exist_ok=True)
+                save_file(unwrapped_model.state_dict(), save_path)
+                accelerator.print(f"Model saved to {save_path}")
             
             
 
@@ -151,24 +180,24 @@ def main():
 
     # Save final model
     accelerator.wait_for_everyone()
-    unwrapped_model = accelerator.unwrap_model(model)
+    if accelerator.is_main_process:
+        unwrapped_model = accelerator.unwrap_model(model)
     
+        # final_save_path = "diffusion_pytorch_model.safetensors"
+        # save_file(unwrapped_model.state_dict(), final_save_path)
 
-    # final_save_path = "diffusion_pytorch_model.safetensors"
-    # save_file(unwrapped_model.state_dict(), final_save_path)
-
-    # # Upload to Hugging Face Hub
-    # try:
-    #     api = HfApi()
-    #     api.upload_file(
-    #         path_or_fileobj=final_save_path,
-    #         path_in_repo="weights_vae/model_meteofrance_rope_vae.safetensors",
-    #         repo_id="Forbu14/meteolibre",
-    #         repo_type="model",
-    #     )
-    #     print("Model successfully uploaded to Hugging Face Hub.")
-    # except Exception as e:
-    #     print(f"Failed to upload model to Hugging Face Hub: {e}")
+        # # Upload to Hugging Face Hub
+        # try:
+        #     api = HfApi()
+        #     api.upload_file(
+        #         path_or_fileobj=final_save_path,
+        #         path_in_repo="weights_vae/model_meteofrance_rope_vae.safetensors",
+        #         repo_id="Forbu14/meteolibre",
+        #         repo_type="model",
+        #     )
+        #     print("Model successfully uploaded to Hugging Face Hub.")
+        # except Exception as e:
+        #     print(f"Failed to upload model to Hugging Face Hub: {e}")
 
 if __name__ == "__main__":
     main()

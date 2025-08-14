@@ -36,7 +36,7 @@ class FinalLayer(nn.Module):
         return x
 
 
-class DiTCore(pl.LightningModule):
+class DiTCore(nn.Module):
     """
     A modified version of the DiT model for use in the meteolibre_model.
 
@@ -45,7 +45,16 @@ class DiTCore(pl.LightningModule):
     """
 
     def __init__(
-        self, nb_temporals, hidden_size=384, depth=12, num_heads=8, patch_size=2, out_channels=16, in_channels=16, condition_size=3, image_size=16
+        self,
+        nb_temporals,
+        hidden_size=384,
+        depth=12,
+        num_heads=8,
+        patch_size=2,
+        out_channels=16,
+        in_channels=16,
+        condition_size=3,
+        image_size=16,
     ):
         super().__init__()
         self.nb_temporals = nb_temporals
@@ -53,7 +62,9 @@ class DiTCore(pl.LightningModule):
         self.image_size = image_size
 
         self.model_core = DiT(
-            num_patches=image_size * image_size * nb_temporals,  # if 2d with flatten size
+            num_patches=image_size
+            * image_size
+            * nb_temporals,  # if 2d with flatten size
             hidden_size=hidden_size,
             depth=depth,
             num_heads=num_heads,
@@ -80,15 +91,19 @@ class DiTCore(pl.LightningModule):
         )
 
         self.final_layer = FinalLayer(hidden_size, patch_size, self.out_channels)
-        
+
         # proj init
-        self.prof_init = nn.Linear(
-            in_channels, hidden_size, bias=True
-        )
-        
+        self.prof_init = nn.Linear(in_channels, hidden_size, bias=True)
+
         # proj end
-        self.prof_end = nn.Linear(
-            hidden_size, out_channels, bias=True
+        self.prof_end = nn.Linear(hidden_size, out_channels, bias=True)
+
+        # time embedding (only for the time sequence)
+        self.time_embedding = nn.Parameter(
+            torch.randn(in_channels, nb_temporals)
+            .unsqueeze(0)
+            .unsqueeze(-1)
+            .unsqueeze(-1)
         )
 
     def unpatchify(self, x):
@@ -114,22 +129,30 @@ class DiTCore(pl.LightningModule):
         """
         x_scalar = self.mlp(scalar_input)
 
+        x = x + self.time_embedding
+
         x = einops.rearrange(x, "b c n h w -> b (n h w) c")
 
         x = self.prof_init(x)
-        #x = self.x_embedder(x)
+        # x = self.x_embedder(x)
 
         # resize temporals
-        #x = einops.rearrange(x, "(b n) nb_seq d -> b (n nb_seq) d", n=self.nb_temporals)
+        # x = einops.rearrange(x, "(b n) nb_seq d -> b (n nb_seq) d", n=self.nb_temporals)
 
         x = self.model_core(x, x_scalar)
         x = self.prof_end(x)
 
-        #x = einops.rearrange(x, "b (n nb_seq) d -> (b n) nb_seq d", n=self.nb_temporals)
+        # x = einops.rearrange(x, "b (n nb_seq) d -> (b n) nb_seq d", n=self.nb_temporals)
 
-        #x = self.final_layer(x)  # (N, T, patch_size ** 2 * out_channels)
-        #x = self.unpatchify(x)  # (N, out_channels, H, W)
+        # x = self.final_layer(x)  # (N, T, patch_size ** 2 * out_channels)
+        # x = self.unpatchify(x)  # (N, out_channels, H, W)
 
-        x = einops.rearrange(x, "b (n h w) c -> b c n h w", n=self.nb_temporals, h=self.image_size, w=self.image_size)
-        
+        x = einops.rearrange(
+            x,
+            "b (n h w) c -> b c n h w",
+            n=self.nb_temporals,
+            h=self.image_size,
+            w=self.image_size,
+        )
+
         return x
