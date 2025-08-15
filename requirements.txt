@@ -3,11 +3,11 @@ pyproj
 pandas
 matplotlib
 pyarrow
-lightning
+#lightning
 datasets
 huggingface_hub[cli]
 timm
-wandb
+#wandb
 imageio
 diffusers
 einops

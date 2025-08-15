@@ -8,7 +8,6 @@ import torch
 import torch.nn as nn
 import einops
 
-import lightning.pytorch as pl
 from timm.models.vision_transformer import PatchEmbed
 
 from dit_ml.dit import DiT

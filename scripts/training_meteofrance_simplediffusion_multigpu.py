@@ -31,7 +31,7 @@ import os
 import random
 
 # Add project root to sys.path
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
 
 import torch
@@ -51,16 +51,20 @@ from meteolibre_model.datasets.dataset_meteofrance_v2 import MeteoLibreDataset
 from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
 
 # Configuration
-PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/"]
+PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/",
+            "/workspace/data/hf_dataset_v2/", "/workspace/data/hf_dataset_v3/", 
+            "/workspace/data/hf_dataset_v4/", "/workspace/data/hf_dataset_v5/",
+            "/workspace/data/hf_dataset_v6/", "/workspace/data/hf_dataset_v7/"]
+
 #PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
 BATCH_SIZE = 16
 LEARNING_RATE = 2e-4
-NUM_WORKERS = 20
+NUM_WORKERS = 15
 NUM_EPOCHS = 100
 GRADIENT_ACCUMULATION_STEPS = 2
 GRADIENT_CLIP_VAL = 1.0
 LOG_EVERY_N_STEPS = 5
-SAVE_EVERY_N_EPOCHS = 1
+SAVE_EVERY_N_EPOCHS = 5
 MODEL_DIR = "models/meteolibre_simplediffusion_multigpu/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
 
@@ -139,7 +143,9 @@ def main():
     for epoch in range(NUM_EPOCHS):
         for step, batch in enumerate(tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}")):
             with accelerator.accumulate(model):
-                losses = model.compute_loss(batch, accelerator.device)
+                # Unwrap the model to access custom methods like compute_loss
+                unwrapped_model = accelerator.unwrap_model(model)
+                losses = unwrapped_model.compute_loss(batch, accelerator.device)
                 loss = losses["total_loss"]
                 
                 if torch.isnan(loss):
@@ -161,7 +167,8 @@ def main():
                 
         # log image at the epoch end
         if accelerator.is_main_process:
-            log_sample_image(model, batch, global_step, accelerator)
+            unwrapped_model = accelerator.unwrap_model(model)
+            log_sample_image(unwrapped_model, batch, global_step, accelerator)
             
 
         if (epoch + 1) % SAVE_EVERY_N_EPOCHS == 0:
