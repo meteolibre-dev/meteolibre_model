@@ -37,7 +37,7 @@ sys.path.insert(0, project_root)
 import torch
 from torch.utils.data import DataLoader
 from torch.optim import AdamW
-from heavyball import ForeachSOAP
+from heavyball import ForeachSOAP, ForeachMuon
 
 from accelerate import Accelerator
 from safetensors.torch import save_file
@@ -59,7 +59,7 @@ PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/",
 #PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
 BATCH_SIZE = 16
 LEARNING_RATE = 2e-4
-NUM_WORKERS = 15
+NUM_WORKERS = 16
 NUM_EPOCHS = 100
 GRADIENT_ACCUMULATION_STEPS = 2
 GRADIENT_CLIP_VAL = 1.0
@@ -108,7 +108,8 @@ def main():
     accelerator = Accelerator(
         mixed_precision="fp16",
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        log_with="tensorboard", project_dir="."
+        log_with="tensorboard", project_dir=".",
+        dynamo_backend="no",
     )
 
     hps = {"batch_size": BATCH_SIZE, "learning_rate": LEARNING_RATE}
@@ -131,8 +132,8 @@ def main():
     )
 
     # Initialize Optimizer
-    #optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
-    optimizer = ForeachSOAP(model.parameters(), lr=LEARNING_RATE, warmup_steps=100)
+    optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
+    #optimizer = ForeachMuon(model.parameters(), lr=LEARNING_RATE, warmup_steps=100, foreach=False)
 
     # Prepare for training with accelerate
     model, optimizer, train_dataloader = accelerator.prepare(
@@ -140,8 +141,11 @@ def main():
     )
 
     # Training Loop
+    global_step = 0
     for epoch in range(NUM_EPOCHS):
-        for step, batch in enumerate(tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}")):
+        # Use tqdm only on the main process for cleaner output
+        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}", disable=not accelerator.is_main_process)
+        for step, batch in enumerate(progress_bar):
             with accelerator.accumulate(model):
                 # Unwrap the model to access custom methods like compute_loss
                 unwrapped_model = accelerator.unwrap_model(model)
@@ -153,22 +157,31 @@ def main():
                     continue
 
                 accelerator.backward(loss)
+
+                # This block only executes when it's time to update the model weights
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(model.parameters(), GRADIENT_CLIP_VAL)
-                optimizer.step()
-                optimizer.zero_grad()
+                    optimizer.step()
+                    optimizer.zero_grad()
 
-            global_step = epoch * len(train_dataloader) + step
-            if (global_step + 1) % LOG_EVERY_N_STEPS == 0:
-                if accelerator.is_main_process:
-                    accelerator.print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{step+1}/{len(train_dataloader)}], Loss: {loss.item():.4f}")
-                    for loss_name, loss_value in losses.items():
-                        accelerator.log({loss_name: loss_value.item()}, step=global_step)
+                    # --- MODIFICATION START ---
+                    # Increment global_step ONLY on a successful optimization step
+                    global_step += 1
+                    
+                    if global_step % LOG_EVERY_N_STEPS == 0:
+                        if accelerator.is_main_process:
+                            # Update the progress bar with the latest loss
+                            progress_bar.set_postfix(loss=loss.item())
+                            
+                            accelerator.print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Global Step [{global_step}], Loss: {loss.item():.4f}")
+                            for loss_name, loss_value in losses.items():
+                                accelerator.log({loss_name: loss_value.item()}, step=global_step)
+                    # --- MODIFICATION END ---
                 
         # log image at the epoch end
         if accelerator.is_main_process:
             unwrapped_model = accelerator.unwrap_model(model)
-            log_sample_image(unwrapped_model, batch, global_step, accelerator)
+            log_sample_image(unwrapped_model, batch, epoch, accelerator)
             
 
         if (epoch + 1) % SAVE_EVERY_N_EPOCHS == 0:
