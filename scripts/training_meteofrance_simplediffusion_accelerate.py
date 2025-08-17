@@ -86,7 +86,7 @@ def main():
     accelerator.init_trackers("tb_simplediffusion_" +  str(random.randint(0, 1000)), config=hps)
 
     # Initialize Dataset and DataLoader
-    dataset = MeteoLibreDatasetHF(streaming=False)
+    dataset = MeteoLibreDatasetHF(localrepo="/workspace/data")
     train_dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
