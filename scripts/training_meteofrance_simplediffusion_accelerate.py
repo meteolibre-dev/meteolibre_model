@@ -6,7 +6,7 @@ import os
 import random
 
 # Add project root to sys.path
-project_root = os.path.abspath("/teamspace/studios/this_studio/meteolibre_model/")
+project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
 
 import torch
@@ -27,15 +27,15 @@ from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffu
 
 # Configuration
 #PATHDATA = ["/workspace/data/hf_dataset"]
-BATCH_SIZE = 1
+BATCH_SIZE = 16
 LEARNING_RATE = 2e-4
-NUM_WORKERS = 5
+NUM_WORKERS = 32
 NUM_EPOCHS = 100
-GRADIENT_ACCUMULATION_STEPS = 2
+GRADIENT_ACCUMULATION_STEPS = 8
 GRADIENT_CLIP_VAL = 1.0
 LOG_EVERY_N_STEPS = 5
 SAVE_EVERY_N_EPOCHS = 1
-STEPS_PER_EPOCH = 10000  # Define steps per epoch for IterableDataset
+STEPS_PER_EPOCH = 6000  # Define steps per epoch for IterableDataset
 MODEL_DIR = "models/meteolibre_simplediffusion_accelerate/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
 
@@ -86,7 +86,7 @@ def main():
     accelerator.init_trackers("tb_simplediffusion_" +  str(random.randint(0, 1000)), config=hps)
 
     # Initialize Dataset and DataLoader
-    dataset = MeteoLibreDatasetHF()
+    dataset = MeteoLibreDatasetHF(streaming=False)
     train_dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,

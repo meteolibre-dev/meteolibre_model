@@ -52,12 +52,13 @@ def read_record(record):
     }
 
 class MeteoLibreDatasetHF(torch.utils.data.IterableDataset):
-    def __init__(self, hf_repo="meteolibre-dev/mtg_meteofrance_256", split="train", streaming=True, trust_remote_code=True):
+    def __init__(self, hf_repo="meteolibre-dev/mtg_meteofrance_256", streaming=True, cache_dir="/workspace/data/"):
         super().__init__()
 
-        self.ds = load_dataset(hf_repo, split=split, streaming=streaming, trust_remote_code=trust_remote_code)
+        self.ds = load_dataset(hf_repo, streaming=streaming, cache_dir=cache_dir)
 
     def __iter__(self):
-        for row in self.ds:
+        for row in self.ds["train"]:
+            
             data = read_record(row)
             yield data
