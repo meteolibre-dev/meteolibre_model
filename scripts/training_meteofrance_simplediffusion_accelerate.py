@@ -29,12 +29,12 @@ from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffu
 #PATHDATA = ["/workspace/data/hf_dataset"]
 BATCH_SIZE = 16
 LEARNING_RATE = 2e-4
-NUM_WORKERS = 32
+NUM_WORKERS = 16
 NUM_EPOCHS = 100
 GRADIENT_ACCUMULATION_STEPS = 8
 GRADIENT_CLIP_VAL = 1.0
-LOG_EVERY_N_STEPS = 5
-SAVE_EVERY_N_EPOCHS = 1
+LOG_EVERY_N_STEPS = 20
+SAVE_EVERY_N_EPOCHS = 5
 STEPS_PER_EPOCH = 6000  # Define steps per epoch for IterableDataset
 MODEL_DIR = "models/meteolibre_simplediffusion_accelerate/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
