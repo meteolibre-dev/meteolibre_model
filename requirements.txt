@@ -4,7 +4,7 @@ pandas
 matplotlib
 pyarrow
 #lightning
-datasets
+datasets==4.0
 huggingface_hub[cli]
 timm
 #wandb

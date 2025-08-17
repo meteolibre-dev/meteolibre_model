@@ -47,15 +47,10 @@ import os
 import torchvision
 import einops
 
-from meteolibre_model.datasets.dataset_meteofrance_v2 import MeteoLibreDataset
+from meteolibre_model.datasets.dataset_meteofrance_v3 import MeteoLibreDatasetHF
 from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
 
 # Configuration
-PATHDATA = ["/workspace/data/hf_dataset_v0/", "/workspace/data/hf_dataset_v1/",
-            "/workspace/data/hf_dataset_v2/", "/workspace/data/hf_dataset_v3/", 
-            "/workspace/data/hf_dataset_v4/", "/workspace/data/hf_dataset_v5/",
-            "/workspace/data/hf_dataset_v6/", "/workspace/data/hf_dataset_v7/"]
-
 #PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
 BATCH_SIZE = 16
 LEARNING_RATE = 2e-4
@@ -65,6 +60,7 @@ GRADIENT_ACCUMULATION_STEPS = 2
 GRADIENT_CLIP_VAL = 1.0
 LOG_EVERY_N_STEPS = 5
 SAVE_EVERY_N_EPOCHS = 5
+STEPS_PER_EPOCH = 10000  # Define steps per epoch for IterableDataset
 MODEL_DIR = "models/meteolibre_simplediffusion_multigpu/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
 
@@ -108,7 +104,7 @@ def main():
     accelerator = Accelerator(
         mixed_precision="fp16",
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        log_with="tensorboard", project_dir=".",
+        log_with="tensorboard",
         dynamo_backend="no",
     )
 
@@ -116,11 +112,10 @@ def main():
     accelerator.init_trackers("tb_simplediffusion_multigpu_" +  str(random.randint(0, 1000)), config=hps)
 
     # Initialize Dataset and DataLoader
-    dataset = MeteoLibreDataset(directory=PATHDATA)
+    dataset = MeteoLibreDatasetHF()
     train_dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
-        shuffle=True,
         num_workers=NUM_WORKERS,
         pin_memory=True,
     )
@@ -143,9 +138,13 @@ def main():
     # Training Loop
     global_step = 0
     for epoch in range(NUM_EPOCHS):
+        model.train()
         # Use tqdm only on the main process for cleaner output
-        progress_bar = tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}", disable=not accelerator.is_main_process)
+        progress_bar = tqdm(train_dataloader, total=STEPS_PER_EPOCH, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}", disable=not accelerator.is_main_process)
         for step, batch in enumerate(progress_bar):
+            if step >= STEPS_PER_EPOCH:
+                break
+
             with accelerator.accumulate(model):
                 # Unwrap the model to access custom methods like compute_loss
                 unwrapped_model = accelerator.unwrap_model(model)
@@ -164,7 +163,6 @@ def main():
                     optimizer.step()
                     optimizer.zero_grad()
 
-                    # --- MODIFICATION START ---
                     # Increment global_step ONLY on a successful optimization step
                     global_step += 1
                     
@@ -176,7 +174,6 @@ def main():
                             accelerator.print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Global Step [{global_step}], Loss: {loss.item():.4f}")
                             for loss_name, loss_value in losses.items():
                                 accelerator.log({loss_name: loss_value.item()}, step=global_step)
-                    # --- MODIFICATION END ---
                 
         # log image at the epoch end
         if accelerator.is_main_process:

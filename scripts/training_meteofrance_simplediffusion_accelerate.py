@@ -22,12 +22,11 @@ import os
 import torchvision
 import einops
 
-from meteolibre_model.datasets.dataset_meteofrance_v2 import MeteoLibreDataset
+from meteolibre_model.datasets.dataset_meteofrance_v3 import MeteoLibreDatasetHF
 from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
 
 # Configuration
 #PATHDATA = ["/workspace/data/hf_dataset"]
-PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
 BATCH_SIZE = 1
 LEARNING_RATE = 2e-4
 NUM_WORKERS = 5
@@ -36,6 +35,7 @@ GRADIENT_ACCUMULATION_STEPS = 2
 GRADIENT_CLIP_VAL = 1.0
 LOG_EVERY_N_STEPS = 5
 SAVE_EVERY_N_EPOCHS = 1
+STEPS_PER_EPOCH = 10000  # Define steps per epoch for IterableDataset
 MODEL_DIR = "models/meteolibre_simplediffusion_accelerate/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
 
@@ -86,11 +86,10 @@ def main():
     accelerator.init_trackers("tb_simplediffusion_" +  str(random.randint(0, 1000)), config=hps)
 
     # Initialize Dataset and DataLoader
-    dataset = MeteoLibreDataset(directory=PATHDATA)
+    dataset = MeteoLibreDatasetHF()
     train_dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
-        shuffle=True,
         num_workers=NUM_WORKERS,
         pin_memory=True,
     )
@@ -111,8 +110,15 @@ def main():
     )
 
     # Training Loop
+    global_step = 0
     for epoch in range(NUM_EPOCHS):
-        for step, batch in enumerate(tqdm(train_dataloader, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}")):
+        model.train()
+        pbar = tqdm(train_dataloader, total=STEPS_PER_EPOCH, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}")
+        for step, batch in enumerate(pbar):
+            # Manually break after STEPS_PER_EPOCH
+            if step >= STEPS_PER_EPOCH:
+                break
+
             with accelerator.accumulate(model):
                 losses = model.compute_loss(batch, accelerator.device)
                 loss = losses["total_loss"]
@@ -127,12 +133,14 @@ def main():
                 optimizer.step()
                 optimizer.zero_grad()
 
-            global_step = epoch * len(train_dataloader) + step
             if (global_step + 1) % LOG_EVERY_N_STEPS == 0:
-                accelerator.print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{step+1}/{len(train_dataloader)}], Loss: {loss.item():.4f}")
+                pbar.set_postfix(loss=loss.item())
+                accelerator.print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Step [{step+1}/{STEPS_PER_EPOCH}], Loss: {loss.item():.4f}")
                 for loss_name, loss_value in losses.items():
                     accelerator.log({loss_name: loss_value.item()}, step=global_step)
-                
+            
+            global_step += 1
+        
         # log image at the epoch end
         log_sample_image(model, batch, global_step, accelerator)
             
