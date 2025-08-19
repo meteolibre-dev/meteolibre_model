@@ -123,7 +123,7 @@ def main():
 
     # Initialize Model
     model = Simple3DDiffusionModel(
-        parametrization="noisy",
+        parametrization="velocity",
         schedule="shifted_cosine",
     )
     

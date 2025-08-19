@@ -55,12 +55,12 @@ class Simple3DDiffusionModel(nn.Module):
         self.model_encoder_decoder = ResidualUNet3D(
             in_channels=nb_channels,
             out_channels=nb_channels,
-            final_sigmoid=True,
+            final_sigmoid=False,
             f_maps=self.f_maps,
             layer_order="gcr",
             num_groups=8,
             num_levels=self.num_levels,
-            is_segmentation=True,
+            is_segmentation=False,
             conv_padding=1,
             pool_kernel_size=(1, 2, 2),
         )
