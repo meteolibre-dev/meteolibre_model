@@ -75,6 +75,30 @@ def log_sample_image(model, batch, step, accelerator):
         torchvision.utils.save_image(sample_landcover, save_path, normalize=True)
         accelerator.print(f"Saved sample image to {save_path}")
 
+        # Log target images for comparison
+        target_frames = x_image[0, model.nb_back:(model.nb_back + model.nb_future)]
+
+        # Assuming the radar channel is at index 5
+        target_radar = target_frames[:, 5, :, :]
+        target_radar = einops.rearrange(target_radar, 't h w -> t 1 h w')
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_radar_step_{step}.png")
+        torchvision.utils.save_image(target_radar, save_path, normalize=True)
+        accelerator.print(f"Saved target radar image to {save_path}")
+
+        # Assuming the sat channel is at index -1
+        target_sat = target_frames[:, -1, :, :]
+        target_sat = einops.rearrange(target_sat, 't h w -> t 1 h w')
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_sat_step_{step}.png")
+        torchvision.utils.save_image(target_sat, save_path, normalize=True)
+        accelerator.print(f"Saved target sat image to {save_path}")
+
+        # Assuming the landcover channel is at index 0
+        target_landcover = target_frames[:, 0, :, :]
+        target_landcover = einops.rearrange(target_landcover, 't h w -> t 1 h w')
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_landcover_step_{step}.png")
+        torchvision.utils.save_image(target_landcover, save_path, normalize=True)
+        accelerator.print(f"Saved target landcover image to {save_path}")
+
 def main():
     accelerator = Accelerator(
         mixed_precision="fp16",
