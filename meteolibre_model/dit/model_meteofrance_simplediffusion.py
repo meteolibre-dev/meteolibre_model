@@ -317,7 +317,7 @@ class Simple3DDiffusionModel(nn.Module):
         return mu, variance
 
     @torch.no_grad()
-    def sample(self, input_meteo_frames, x_hour, x_minute, sampling_steps=100):
+    def sample(self, input_meteo_frames, x_hour, x_minute, sampling_steps=256):
         """
         Standard DDPM sampling procedure.
         """
