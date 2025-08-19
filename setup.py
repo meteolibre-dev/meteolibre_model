@@ -33,5 +33,6 @@ setuptools.setup(
         "safetensors",
         "dit_ml",
         "tensorboard",
+        "git+https://github.com/Forbu/pytorch-3dunet.git",
     ]
 )
