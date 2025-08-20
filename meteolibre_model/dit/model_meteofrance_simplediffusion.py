@@ -126,6 +126,9 @@ class Simple3DDiffusionModel(nn.Module):
         encoders_features = encoders_features[1:]
 
         x = self.model_core(x, x_scalar)
+        
+        if torch.isnan(x).any() or torch.isinf(x).any():
+            breakpoint()
 
         for decoder, encoder_features in zip(
             self.model_encoder_decoder.decoders, encoders_features
@@ -235,9 +238,9 @@ class Simple3DDiffusionModel(nn.Module):
         x_hour = batch["hour"].clone().detach().float().unsqueeze(1)
         x_minute = batch["minute"].clone().detach().float().unsqueeze(1)
         logsnr_t_unsq = logsnr_t.unsqueeze(1)
-        x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq], dim=1)
+        x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq / 10.], dim=1)
 
-        pred = self.forward(input_model, x_scalar)
+        pred = self.forward(input_model.float(), x_scalar.float())
 
         if self.parametrization == "velocity":
             eps_pred = sigma_t * x_t + alpha_t * pred
@@ -254,7 +257,7 @@ class Simple3DDiffusionModel(nn.Module):
         else:
             weight = F.sigmoid(-1.5 - logsnr_t) #1 / (1 + snr) 
 
-        weight = 1 # weight.view(-1, 1, 1, 1, 1)
+        weight = weight.view(-1, 1, 1, 1, 1)
         loss_tensor = weight * (eps_pred - target) ** 2
 
         loss_radar = loss_tensor[:, :, [5], :, :].mean()
@@ -273,6 +276,20 @@ class Simple3DDiffusionModel(nn.Module):
             + loss_ground * 0.01
             + loss_satellite * 0.5
         )
+        
+        # if loss is NaN we just return value 0
+        if torch.isnan(total_loss) or torch.isinf(total_loss):
+            print("NaN or Inf loss detected")
+            print(loss_radar)
+            print(loss_groundstation)
+            print(loss_satellite)
+            print(loss_ground)
+            #breakpoint()
+            return {"total_loss" : torch.tensor(0., device=loss_tensor.device, requires_grad=True, dtype=torch.float32),
+                    "loss_radar" : torch.tensor(0., device=loss_tensor.device, requires_grad=True, dtype=torch.float32),
+                    "loss_groundstation" : torch.tensor(0., device=loss_tensor.device, requires_grad=True, dtype=torch.float32),
+                    "loss_satellite" : torch.tensor(0., device=loss_tensor.device, requires_grad=True, dtype=torch.float32),
+                    "loss_ground" : torch.tensor(0., device=loss_tensor.device, requires_grad=True, dtype=torch.float32)}
 
 
         losses = {
@@ -340,7 +357,7 @@ class Simple3DDiffusionModel(nn.Module):
             logsnr_s = self.get_logsnr(torch.full((batch_size,), u_s_val, device=device))
 
             logsnr_t_unsq = logsnr_t.unsqueeze(1)
-            x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq], dim=1)
+            x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq / 10.], dim=1)
             
             input_model = torch.cat([input_meteo_frames, z_t], dim=1)
             pred = self.forward(input_model, x_scalar)

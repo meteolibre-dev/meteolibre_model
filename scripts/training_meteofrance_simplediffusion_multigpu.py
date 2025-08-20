@@ -47,20 +47,20 @@ import os
 import torchvision
 import einops
 
-from meteolibre_model.datasets.dataset_meteofrance_v3 import MeteoLibreDatasetHF
+from meteolibre_model.datasets.dataset_meteofrance_v4 import MeteoLibreMapDataset
 from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
 
 # Configuration
 #PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
 BATCH_SIZE = 16
-LEARNING_RATE = 2e-4
-NUM_WORKERS = 16
+LEARNING_RATE = 5e-4
+NUM_WORKERS = 4
 NUM_EPOCHS = 100
-GRADIENT_ACCUMULATION_STEPS = 4
+GRADIENT_ACCUMULATION_STEPS = 2
 GRADIENT_CLIP_VAL = 1.0
-LOG_EVERY_N_STEPS = 5
+LOG_EVERY_N_STEPS = 20
 SAVE_EVERY_N_EPOCHS = 5
-STEPS_PER_EPOCH = 5900  # Define steps per epoch for IterableDataset
+STEPS_PER_EPOCH = 6000  # Define steps per epoch for IterableDataset
 MODEL_DIR = "models/meteolibre_simplediffusion_multigpu/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
 
@@ -127,29 +127,34 @@ def log_sample_image(model, batch, step, accelerator):
         accelerator.print(f"Saved target landcover image to {save_path}")
     model.train()
 
+
 def main():
     accelerator = Accelerator(
         mixed_precision="fp16",
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
         log_with="tensorboard",
         dynamo_backend="no",
+        project_dir="."
     )
 
     hps = {"batch_size": BATCH_SIZE, "learning_rate": LEARNING_RATE}
     accelerator.init_trackers("tb_simplediffusion_multigpu_" +  str(random.randint(0, 1000)), config=hps)
 
+    localrepo = "/workspace/data"
     # Initialize Dataset and DataLoader
-    dataset = MeteoLibreDatasetHF()
+    dataset = MeteoLibreMapDataset(localrepo=localrepo)
+    
     train_dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
         num_workers=NUM_WORKERS,
+        shuffle=False,
         pin_memory=True,
     )
 
     # Initialize Model
     model = Simple3DDiffusionModel(
-        parametrization="velocity",
+        parametrization="noisy",
         schedule="shifted_cosine",
     )
 
@@ -178,15 +183,18 @@ def main():
                 losses = unwrapped_model.compute_loss(batch, accelerator.device)
                 loss = losses["total_loss"]
                 
-                if torch.isnan(loss):
+                if torch.isnan(loss) or torch.isinf(loss):
                     accelerator.print(f"NaN loss detected at epoch {epoch}, step {step}. Skipping.")
+                    
+                    # sync and continune
+                    
                     continue
 
                 accelerator.backward(loss)
 
-                # This block only executes when it's time to update the model weights
+                # This block only executes when int's time to update the model weights
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(model.parameters(), GRADIENT_CLIP_VAL)
+                    accelerator.clip_grad_norm_(model.parameters(), max_norm=GRADIENT_CLIP_VAL)
                     optimizer.step()
                     optimizer.zero_grad()
 
