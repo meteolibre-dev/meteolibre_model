@@ -56,20 +56,22 @@ BATCH_SIZE = 16
 LEARNING_RATE = 2e-4
 NUM_WORKERS = 16
 NUM_EPOCHS = 100
-GRADIENT_ACCUMULATION_STEPS = 2
+GRADIENT_ACCUMULATION_STEPS = 4
 GRADIENT_CLIP_VAL = 1.0
 LOG_EVERY_N_STEPS = 5
 SAVE_EVERY_N_EPOCHS = 5
-STEPS_PER_EPOCH = 10000  # Define steps per epoch for IterableDataset
+STEPS_PER_EPOCH = 5900  # Define steps per epoch for IterableDataset
 MODEL_DIR = "models/meteolibre_simplediffusion_multigpu/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
 
 def log_sample_image(model, batch, step, accelerator):
     os.makedirs(IMAGE_LOG_DIR, exist_ok=True)
     
+    model.eval()
     with torch.no_grad():
         x_image, _, _, _ = model.prepare_target(batch, accelerator.device)
         input_meteo_frames = x_image[:, :model.nb_back]
+
         
         x_hour = batch["hour"].clone().detach().float().unsqueeze(1)
         x_minute = batch["minute"].clone().detach().float().unsqueeze(1)
@@ -81,7 +83,7 @@ def log_sample_image(model, batch, step, accelerator):
         sample_radar = einops.rearrange(sample_radar, 't h w -> t 1 h w')
         
         save_path = os.path.join(IMAGE_LOG_DIR, f"sample_radar_step_{step}.png")
-        torchvision.utils.save_image(sample_radar, save_path, normalize=True)
+        torchvision.utils.save_image(sample_radar, save_path, normalize=True, value_range=(-2., 2.))
         accelerator.print(f"Saved sample image to {save_path}")
         
         # Assuming the sat channel is at index -1
@@ -89,7 +91,7 @@ def log_sample_image(model, batch, step, accelerator):
         sample_sat = einops.rearrange(sample_sat, 't h w -> t 1 h w')
         
         save_path = os.path.join(IMAGE_LOG_DIR, f"sample_sat_step_{step}.png")
-        torchvision.utils.save_image(sample_sat, save_path, normalize=True)
+        torchvision.utils.save_image(sample_sat, save_path, normalize=True, value_range=(-2., 2.))
         accelerator.print(f"Saved sample image to {save_path}")
         
         # Assuming the lancover channel is at index 0
@@ -97,8 +99,33 @@ def log_sample_image(model, batch, step, accelerator):
         sample_landcover = einops.rearrange(sample_landcover, 't h w -> t 1 h w')
         
         save_path = os.path.join(IMAGE_LOG_DIR, f"sample_landcover_step_{step}.png")
-        torchvision.utils.save_image(sample_landcover, save_path, normalize=True)
+        torchvision.utils.save_image(sample_landcover, save_path, normalize=True, value_range=(-2., 2.))
         accelerator.print(f"Saved sample image to {save_path}")
+
+        # Log target images for comparison
+        target_frames = x_image[0, model.nb_back:(model.nb_back + model.nb_future)]
+
+        # Assuming the radar channel is at index 5
+        target_radar = target_frames[:, 5, :, :]
+        target_radar = einops.rearrange(target_radar, 't h w -> t 1 h w')
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_radar_step_{step}.png")
+        torchvision.utils.save_image(target_radar, save_path, normalize=True, value_range=(-2., 2.))
+        accelerator.print(f"Saved target radar image to {save_path}")
+
+        # Assuming the sat channel is at index -1
+        target_sat = target_frames[:, -1, :, :]
+        target_sat = einops.rearrange(target_sat, 't h w -> t 1 h w')
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_sat_step_{step}.png")
+        torchvision.utils.save_image(target_sat, save_path, normalize=True, value_range=(-2., 2.))
+        accelerator.print(f"Saved target sat image to {save_path}")
+
+        # Assuming the landcover channel is at index 0
+        target_landcover = target_frames[:, 0, :, :]
+        target_landcover = einops.rearrange(target_landcover, 't h w -> t 1 h w')
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_landcover_step_{step}.png")
+        torchvision.utils.save_image(target_landcover, save_path, normalize=True, value_range=(-2., 2.))
+        accelerator.print(f"Saved target landcover image to {save_path}")
+    model.train()
 
 def main():
     accelerator = Accelerator(

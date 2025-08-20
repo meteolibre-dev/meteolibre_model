@@ -28,7 +28,7 @@ from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffu
 # Configuration
 #PATHDATA = ["/workspace/data/hf_dataset"]
 BATCH_SIZE = 16
-LEARNING_RATE = 2e-4
+LEARNING_RATE = 1e-3
 NUM_WORKERS = 16
 NUM_EPOCHS = 100
 GRADIENT_ACCUMULATION_STEPS = 8
@@ -123,7 +123,7 @@ def main():
 
     # Initialize Model
     model = Simple3DDiffusionModel(
-        parametrization="velocity",
+        parametrization="noisy",
         schedule="shifted_cosine",
     )
     

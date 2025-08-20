@@ -252,9 +252,9 @@ class Simple3DDiffusionModel(nn.Module):
         if self.parametrization == "velocity":
             weight = 1 / (1 + snr)
         else:
-            weight = 1 / snr
+            weight = F.sigmoid(-1.5 - logsnr_t) #1 / (1 + snr) 
 
-        weight = weight.view(-1, 1, 1, 1, 1)
+        weight = 1 # weight.view(-1, 1, 1, 1, 1)
         loss_tensor = weight * (eps_pred - target) ** 2
 
         loss_radar = loss_tensor[:, :, [5], :, :].mean()
