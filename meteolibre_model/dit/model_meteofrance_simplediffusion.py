@@ -334,8 +334,6 @@ class Simple3DDiffusionModel(nn.Module):
             x_pred = alpha_t * z_t - sigma_t * pred
         elif self.parametrization == 'noisy':
             x_pred = (z_t - sigma_t * pred) / alpha_t
-        elif self.parametrization == 'endpoint':
-            x_pred = pred
         else:
             raise ValueError("parametrization not handled")
 
@@ -347,31 +345,63 @@ class Simple3DDiffusionModel(nn.Module):
         return mu, variance
 
     @torch.no_grad()
-    def sample(self, input_meteo_frames, x_hour, x_minute, sampling_steps=256):
+    def sample(
+        self,
+        input_meteo_frames,
+        x_hour,
+        x_minute,
+        sampling_steps=100,
+        schedule_type="linear",
+        deterministic=True,
+    ):
         """
-        Standard DDPM sampling procedure.
+        Standard DDPM sampling procedure, with options for schedule and determinism.
         """
         device = input_meteo_frames.device
         batch_size = input_meteo_frames.shape[0]
 
-        target_shape = (batch_size, self.nb_future, self.nb_channels, self.shape_image, self.shape_image)
+        target_shape = (
+            batch_size,
+            self.nb_future,
+            self.nb_channels,
+            self.shape_image,
+            self.shape_image,
+        )
 
         z_t = torch.randn(target_shape, device=device)
 
-        steps = torch.linspace(1.0, 0.0, sampling_steps + 1, device=device)
+        if schedule_type == "linear":
+            steps = torch.linspace(1.0, 0.0, sampling_steps + 1, device=device)
+        elif schedule_type == "logsnr":
+            logsnr_min = self.get_logsnr(torch.tensor(1.0, device=device))
+            logsnr_max = self.get_logsnr(torch.tensor(0.0, device=device))
+            logsnr_steps = torch.linspace(
+                logsnr_min, logsnr_max, sampling_steps + 1, device=device
+            )
+
+            t_min = torch.atan(torch.exp(-0.5 * logsnr_max))
+            t_max = torch.atan(torch.exp(-0.5 * logsnr_min))
+
+            inv_logsnr = torch.exp(-0.5 * logsnr_steps)
+            t_from_logsnr = (torch.atan(inv_logsnr) - t_min) / (t_max - t_min)
+            steps = t_from_logsnr
+        else:
+            raise ValueError(f"Unknown schedule type: {schedule_type}")
 
         for i in range(sampling_steps):
             u_t_val = steps[i]
-            u_s_val = steps[i+1]
-            
+            u_s_val = steps[i + 1]
+
             u_t = torch.full((batch_size,), u_t_val, device=device)
-            
+
             logsnr_t = self.get_logsnr(u_t)
-            logsnr_s = self.get_logsnr(torch.full((batch_size,), u_s_val, device=device))
+            logsnr_s = self.get_logsnr(
+                torch.full((batch_size,), u_s_val, device=device)
+            )
 
             logsnr_t_unsq = logsnr_t.unsqueeze(1)
-            x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq / 10.], dim=1)
-            
+            x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq], dim=1)
+
             input_model = torch.cat([input_meteo_frames, z_t], dim=1)
             pred = self.forward(input_model, x_scalar)
 
@@ -379,13 +409,13 @@ class Simple3DDiffusionModel(nn.Module):
             logsnr_s = logsnr_s.view(-1, 1, 1, 1, 1)
 
             mu, variance = self.ddpm_sampler_step(z_t, pred, logsnr_t, logsnr_s)
-            
-            if u_s_val > 0:
-                noise = torch.randn_like(mu)
+
+            # For the last step, u_s_val is 0, which should be deterministic.
+            if u_s_val > 0 and not deterministic:
+                # Add small value to variance to avoid sqrt(0) which can be unstable
+                z_t = mu + torch.sqrt(variance.clamp(min=1e-8)) * torch.randn_like(mu)
             else:
-                noise = 0.
-                
-            z_t = mu + noise * torch.sqrt(variance)
+                z_t = mu
 
         x_pred = self.clip(z_t)
 

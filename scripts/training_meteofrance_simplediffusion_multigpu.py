@@ -203,12 +203,16 @@ def main():
                             for loss_name, loss_value in losses.items():
                                 accelerator.log({loss_name: loss_value.item()}, step=global_step)
                 
-        # log image at the epoch end
+        # Synchronize all processes before logging images on the main process
+        accelerator.wait_for_everyone()
+        
+        # log image at the epoch end, only on the main process
         if accelerator.is_main_process:
             unwrapped_model = accelerator.unwrap_model(model)
+            # Now the other GPUs are waiting politely instead of starting the next epoch
             log_sample_image(unwrapped_model, batch, epoch, accelerator)
-            
 
+        # This part for saving the model was already correct
         if (epoch + 1) % SAVE_EVERY_N_EPOCHS == 0:
             accelerator.wait_for_everyone()
             if accelerator.is_main_process:
@@ -217,7 +221,8 @@ def main():
                 os.makedirs(MODEL_DIR, exist_ok=True)
                 save_file(unwrapped_model.state_dict(), save_path)
                 accelerator.print(f"Model saved to {save_path}")
-            
+                
+        accelerator.wait_for_everyone()
             
 
     accelerator.end_training()
