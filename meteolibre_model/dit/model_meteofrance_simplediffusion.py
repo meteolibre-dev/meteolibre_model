@@ -19,6 +19,7 @@ from meteolibre_model.dit.dit_core import DiTCore
 
 from meteolibre_model.datasets.dataset_meteofrance_v2 import STATISTIC_SATELLITE_MEAN, STATISTIC_SATELLITE_STD
 
+import torch.distributed as dist
 
 def log(t, eps=1e-20):
     return torch.log(t.clamp(min=eps))
@@ -127,7 +128,7 @@ class Simple3DDiffusionModel(nn.Module):
 
         x = self.model_core(x, x_scalar)
         
-        if torch.isnan(x).any() or torch.isinf(x).any():
+        if (torch.isnan(x).any() or torch.isinf(x).any()) and dist.get_rank() == 0:
             breakpoint()
 
         for decoder, encoder_features in zip(
@@ -225,7 +226,8 @@ class Simple3DDiffusionModel(nn.Module):
 
         t = stratified_uniform_sample(batch_size, device=device)
 
-        logsnr_t = self.get_logsnr(t)
+        logsnr_t = self.get_logsnr(t).clamp(min=-8, max=9)
+
         alpha_t = torch.sqrt(torch.sigmoid(logsnr_t))
         sigma_t = torch.sqrt(torch.sigmoid(-logsnr_t))
 
@@ -248,6 +250,9 @@ class Simple3DDiffusionModel(nn.Module):
         elif self.parametrization == "noisy":
             eps_pred = pred
             target = eps_t
+        elif self.parametrization == "endpoint":
+            eps_pred = (x_t - alpha_t * pred) / sigma_t
+            target = eps_t
         else:
             raise ValueError("parametrization not handled")
 
@@ -259,6 +264,12 @@ class Simple3DDiffusionModel(nn.Module):
 
         weight = weight.view(-1, 1, 1, 1, 1)
         loss_tensor = weight * (eps_pred - target) ** 2
+        
+        # here we mask the NaN value (replace with 0)
+        loss_tensor = torch.where(torch.isnan(loss_tensor), torch.tensor(0., device=loss_tensor.device), loss_tensor)
+        
+        # same if isinf
+        loss_tensor = torch.where(torch.isinf(loss_tensor), torch.tensor(0., device=loss_tensor.device), loss_tensor)
 
         loss_radar = loss_tensor[:, :, [5], :, :].mean()
 
@@ -323,6 +334,8 @@ class Simple3DDiffusionModel(nn.Module):
             x_pred = alpha_t * z_t - sigma_t * pred
         elif self.parametrization == 'noisy':
             x_pred = (z_t - sigma_t * pred) / alpha_t
+        elif self.parametrization == 'endpoint':
+            x_pred = pred
         else:
             raise ValueError("parametrization not handled")
 

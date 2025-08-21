@@ -130,7 +130,7 @@ def log_sample_image(model, batch, step, accelerator):
 
 def main():
     accelerator = Accelerator(
-        mixed_precision="fp16",
+        mixed_precision="bf16",
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
         log_with="tensorboard",
         dynamo_backend="no",
@@ -182,13 +182,6 @@ def main():
                 unwrapped_model = accelerator.unwrap_model(model)
                 losses = unwrapped_model.compute_loss(batch, accelerator.device)
                 loss = losses["total_loss"]
-                
-                if torch.isnan(loss) or torch.isinf(loss):
-                    accelerator.print(f"NaN loss detected at epoch {epoch}, step {step}. Skipping.")
-                    
-                    # sync and continune
-                    
-                    continue
 
                 accelerator.backward(loss)
 

@@ -6,6 +6,8 @@ from datetime import datetime
 import pandas as pd
 import os
 import json
+import glob
+from collections import OrderedDict
 
 import numpy as np
 from numpy.random import default_rng
@@ -13,6 +15,7 @@ from numpy.random import default_rng
 from datasets import load_dataset
 from torch.utils.data import DataLoader, get_worker_info
 import torch
+import torch.distributed as dist
 
 STATISTIC_SATELLITE_MEAN = torch.tensor([0.1108, 0.1524, 0.0602, 0.1168])
 STATISTIC_SATELLITE_STD = torch.tensor([0.0839, 0.1506, 0.0383, 0.0990])
@@ -20,13 +23,7 @@ STATISTIC_SATELLITE_STD = torch.tensor([0.0839, 0.1506, 0.0383, 0.0990])
 
 STATISTIC_RADAR_MEAN = 0.008580314926803112
 STATISTIC_RADAR_STD = 0.1423337459564209
-import torch
-import pandas as pd
-import numpy as np
-import os
-import glob
 
-from collections import OrderedDict
 
 class MeteoLibreMapDataset(torch.utils.data.Dataset):
     """
@@ -53,36 +50,22 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
 
         # Find all parquet files. We start with a sorted list for consistency.
         data_path = os.path.join(self.localrepo, "data", "*.parquet")
-        base_file_paths = sorted(glob.glob(data_path))
+        self.base_file_paths = sorted(glob.glob(data_path))
+        
+        # we remove the last one 
+        self.base_file_paths = self.base_file_paths[:-1]
 
-        if not base_file_paths:
+
+        if not self.base_file_paths:
             raise FileNotFoundError(f"No Parquet files found at '{data_path}'.")
 
-        # --- Worker-Aware Shuffling Logic ---
-        worker_info = torch.utils.data.get_worker_info()
-        if worker_info is None:
-            # Main process: just use the sorted list
-            self.file_paths = base_file_paths
-        else:
-            # We are in a worker process. Shuffle the files based on worker ID.
-            worker_id = worker_info.id
-            
-            print("worker_id", worker_id)")
-            
-            # Create a generator with a seed unique to this worker and the base seed
-            g = torch.Generator()
-            g.manual_seed(self.seed + worker_id)
-            
-            # Get a random permutation of indices and apply it to the file list
-            perm = torch.randperm(len(base_file_paths), generator=g).tolist()
-            self.file_paths = [base_file_paths[i] for i in perm]
-            # --- End of Shuffling Logic ---
+        self.file_paths = self.base_file_paths
             
         # Initialize an LRU cache for this worker
         self.cache = OrderedDict()
 
         # Calculate the total number of records
-        self.total_records = (len(self.file_paths) - 1) * self.records_per_file
+        self.total_records = len(self.file_paths) * self.records_per_file
 
     def __len__(self) -> int:
         return self.total_records
@@ -119,6 +102,30 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         }
 
     def __getitem__(self, index: int) -> dict:
+        if not getattr(self, 'worker_initialized', False):
+            worker_info = get_worker_info()
+            if worker_info is not None:
+                # We are in a worker process. Shuffle the files based on worker ID.
+                worker_id = worker_info.id
+                #print("worker_id", worker_id)
+                
+                # Get rank of the process to ensure different shuffling across GPUs
+                rank = 0
+                if dist.is_available() and dist.is_initialized():
+                    rank = dist.get_rank()
+                    
+                #print("rank", rank)
+
+                # Create a generator with a seed unique to this worker and the base seed
+                g = torch.Generator()
+                seed = self.seed + worker_id + rank * worker_info.num_workers
+                g.manual_seed(seed)
+                
+                # Get a random permutation of indices and apply it to the file list
+                perm = torch.randperm(len(self.base_file_paths), generator=g).tolist()
+                self.file_paths = [self.base_file_paths[i] for i in perm]
+            self.worker_initialized = True
+
         if index < 0 or index >= self.total_records:
             raise IndexError(f"Index {index} out of range for dataset with size {self.total_records}")
 
@@ -128,6 +135,6 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         try:
             record = data_df.iloc[row_index_in_file]
             return self._preprocess(record)
-        except e as Exception:
-            print("Bad indexing")
-            return self.__getitem__(index + 1)
+        except Exception as e:
+            print(f"Bad indexing for index {index}, file_index {file_index}, row_index {row_index_in_file}. Error: {e}")
+            return self.__getitem__((index + 1) % self.total_records)
