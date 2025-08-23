@@ -209,7 +209,7 @@ class Simple3DDiffusionModel(nn.Module):
         if self.schedule == "cosine":
             return self.logsnr_schedule_cosine(t)
         elif self.schedule == "shifted_cosine":
-            return self.logsnr_schedule_cosine_shifted(t)
+            return self.logsnr_schedule_cosine_shifted(t).clamp(min=-8, max=15)
         else:
             raise ValueError("scheduler not handle")
 
@@ -226,7 +226,7 @@ class Simple3DDiffusionModel(nn.Module):
 
         t = stratified_uniform_sample(batch_size, device=device)
 
-        logsnr_t = self.get_logsnr(t).clamp(min=-8, max=9)
+        logsnr_t = self.get_logsnr(t)
 
         alpha_t = torch.sqrt(torch.sigmoid(logsnr_t))
         sigma_t = torch.sqrt(torch.sigmoid(-logsnr_t))
@@ -353,6 +353,7 @@ class Simple3DDiffusionModel(nn.Module):
         sampling_steps=100,
         schedule_type="linear",
         deterministic=True,
+        visualize_path=None,
     ):
         """
         Standard DDPM sampling procedure, with options for schedule and determinism.
@@ -369,6 +370,9 @@ class Simple3DDiffusionModel(nn.Module):
         )
 
         z_t = torch.randn(target_shape, device=device)
+
+        if visualize_path:
+            os.makedirs(visualize_path, exist_ok=True)
 
         if schedule_type == "linear":
             steps = torch.linspace(1.0, 0.0, sampling_steps + 1, device=device)
@@ -400,7 +404,7 @@ class Simple3DDiffusionModel(nn.Module):
             )
 
             logsnr_t_unsq = logsnr_t.unsqueeze(1)
-            x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq], dim=1)
+            x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq / 10.], dim=1)
 
             input_model = torch.cat([input_meteo_frames, z_t], dim=1)
             pred = self.forward(input_model, x_scalar)
@@ -416,6 +420,13 @@ class Simple3DDiffusionModel(nn.Module):
                 z_t = mu + torch.sqrt(variance.clamp(min=1e-8)) * torch.randn_like(mu)
             else:
                 z_t = mu
+
+            if visualize_path:
+                # Visualize the first satellite channel (13) of the first future frame for the first batch item.
+                img_to_save = z_t[0, 0, 13, :, :].cpu().numpy()
+                plt.imshow(img_to_save, cmap='gray', vmin=-3, vmax=3)
+                plt.savefig(os.path.join(visualize_path, f"zt_step_{i:04d}.png"))
+                plt.close()
 
         x_pred = self.clip(z_t)
 

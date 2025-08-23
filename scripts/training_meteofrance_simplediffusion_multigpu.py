@@ -40,7 +40,7 @@ from torch.optim import AdamW
 from heavyball import ForeachSOAP, ForeachMuon
 
 from accelerate import Accelerator
-from safetensors.torch import save_file
+from safetensors.torch import save_file, load_file
 from huggingface_hub import HfApi
 from tqdm import tqdm
 import os
@@ -61,8 +61,10 @@ GRADIENT_CLIP_VAL = 1.0
 LOG_EVERY_N_STEPS = 20
 SAVE_EVERY_N_EPOCHS = 5
 STEPS_PER_EPOCH = 6000  # Define steps per epoch for IterableDataset
-MODEL_DIR = "models/meteolibre_simplediffusion_multigpu/"
+MODEL_DIR = "models/meteolibre_simplediffusion_multigpu_v3/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
+
+RANGE_VALUE = (-3, 3)
 
 def log_sample_image(model, batch, step, accelerator):
     os.makedirs(IMAGE_LOG_DIR, exist_ok=True)
@@ -72,18 +74,17 @@ def log_sample_image(model, batch, step, accelerator):
         x_image, _, _, _ = model.prepare_target(batch, accelerator.device)
         input_meteo_frames = x_image[:, :model.nb_back]
 
-        
         x_hour = batch["hour"].clone().detach().float().unsqueeze(1)
         x_minute = batch["minute"].clone().detach().float().unsqueeze(1)
         
-        sample = model.sample(input_meteo_frames, x_hour, x_minute)
+        sample = model.sample(input_meteo_frames, x_hour, x_minute, deterministic=False, sampling_steps=500)
         
         # Assuming the radar channel is at index 5
         sample_radar = sample[0, :, 5, :, :]
         sample_radar = einops.rearrange(sample_radar, 't h w -> t 1 h w')
         
         save_path = os.path.join(IMAGE_LOG_DIR, f"sample_radar_step_{step}.png")
-        torchvision.utils.save_image(sample_radar, save_path, normalize=True, value_range=(-2., 2.))
+        torchvision.utils.save_image(sample_radar, save_path, normalize=True, value_range=RANGE_VALUE)
         accelerator.print(f"Saved sample image to {save_path}")
         
         # Assuming the sat channel is at index -1
@@ -91,7 +92,7 @@ def log_sample_image(model, batch, step, accelerator):
         sample_sat = einops.rearrange(sample_sat, 't h w -> t 1 h w')
         
         save_path = os.path.join(IMAGE_LOG_DIR, f"sample_sat_step_{step}.png")
-        torchvision.utils.save_image(sample_sat, save_path, normalize=True, value_range=(-2., 2.))
+        torchvision.utils.save_image(sample_sat, save_path, normalize=True, value_range=RANGE_VALUE)
         accelerator.print(f"Saved sample image to {save_path}")
         
         # Assuming the lancover channel is at index 0
@@ -99,7 +100,7 @@ def log_sample_image(model, batch, step, accelerator):
         sample_landcover = einops.rearrange(sample_landcover, 't h w -> t 1 h w')
         
         save_path = os.path.join(IMAGE_LOG_DIR, f"sample_landcover_step_{step}.png")
-        torchvision.utils.save_image(sample_landcover, save_path, normalize=True, value_range=(-2., 2.))
+        torchvision.utils.save_image(sample_landcover, save_path, normalize=True, value_range=RANGE_VALUE)
         accelerator.print(f"Saved sample image to {save_path}")
 
         # Log target images for comparison
@@ -109,21 +110,21 @@ def log_sample_image(model, batch, step, accelerator):
         target_radar = target_frames[:, 5, :, :]
         target_radar = einops.rearrange(target_radar, 't h w -> t 1 h w')
         save_path = os.path.join(IMAGE_LOG_DIR, f"target_radar_step_{step}.png")
-        torchvision.utils.save_image(target_radar, save_path, normalize=True, value_range=(-2., 2.))
+        torchvision.utils.save_image(target_radar, save_path, normalize=True, value_range=RANGE_VALUE)
         accelerator.print(f"Saved target radar image to {save_path}")
 
         # Assuming the sat channel is at index -1
         target_sat = target_frames[:, -1, :, :]
         target_sat = einops.rearrange(target_sat, 't h w -> t 1 h w')
         save_path = os.path.join(IMAGE_LOG_DIR, f"target_sat_step_{step}.png")
-        torchvision.utils.save_image(target_sat, save_path, normalize=True, value_range=(-2., 2.))
+        torchvision.utils.save_image(target_sat, save_path, normalize=True, value_range=RANGE_VALUE)
         accelerator.print(f"Saved target sat image to {save_path}")
 
         # Assuming the landcover channel is at index 0
         target_landcover = target_frames[:, 0, :, :]
         target_landcover = einops.rearrange(target_landcover, 't h w -> t 1 h w')
         save_path = os.path.join(IMAGE_LOG_DIR, f"target_landcover_step_{step}.png")
-        torchvision.utils.save_image(target_landcover, save_path, normalize=True, value_range=(-2., 2.))
+        torchvision.utils.save_image(target_landcover, save_path, normalize=True, value_range=RANGE_VALUE)
         accelerator.print(f"Saved target landcover image to {save_path}")
     model.train()
 
@@ -157,6 +158,10 @@ def main():
         parametrization="noisy",
         schedule="shifted_cosine",
     )
+    
+    PATH = "/workspace/meteolibre_model/models/meteolibre_simplediffusion_multigpu_v2/epoch_35.safetensors"
+    weights = load_file(PATH)
+    model.load_state_dict(weights)
 
     # Initialize Optimizer
     optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
@@ -173,9 +178,23 @@ def main():
         model.train()
         # Use tqdm only on the main process for cleaner output
         progress_bar = tqdm(train_dataloader, total=STEPS_PER_EPOCH, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}", disable=not accelerator.is_main_process)
+        
+        
+        
+        
         for step, batch in enumerate(progress_bar):
             if step >= STEPS_PER_EPOCH:
                 break
+            
+            # Synchronize all processes before logging images on the main process
+            accelerator.wait_for_everyone()
+            
+            # log image at the epoch end, only on the main process
+            if accelerator.is_main_process:
+                unwrapped_model = accelerator.unwrap_model(model)
+                # Now the other GPUs are waiting politely instead of starting the next epoch
+                log_sample_image(unwrapped_model, batch, epoch, accelerator)
+            accelerator.wait_for_everyone()
 
             with accelerator.accumulate(model):
                 # Unwrap the model to access custom methods like compute_loss
