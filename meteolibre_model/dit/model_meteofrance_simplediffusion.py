@@ -245,25 +245,25 @@ class Simple3DDiffusionModel(nn.Module):
         pred = self.forward(input_model.float(), x_scalar.float())
 
         if self.parametrization == "velocity":
-            eps_pred = sigma_t * x_t + alpha_t * pred
-            target = eps_t
+            proxy_pred = pred
+            target = alpha_t * eps_t - sigma_t * target_meteo_frames
         elif self.parametrization == "noisy":
-            eps_pred = pred
+            proxy_pred = pred
             target = eps_t
         elif self.parametrization == "endpoint":
-            eps_pred = (x_t - alpha_t * pred) / sigma_t
+            proxy_pred = (x_t - alpha_t * pred) / sigma_t
             target = eps_t
         else:
             raise ValueError("parametrization not handled")
 
         snr = torch.exp(logsnr_t).clamp(max=5)
         if self.parametrization == "velocity":
-            weight = 1 / (1 + snr)
+            weight = F.sigmoid(-1.5 - logsnr_t) * F.sigmoid(logsnr_t)
         else:
             weight = F.sigmoid(-1.5 - logsnr_t) #1 / (1 + snr) 
 
         weight = weight.view(-1, 1, 1, 1, 1)
-        loss_tensor = weight * (eps_pred - target) ** 2
+        loss_tensor = weight * (proxy_pred - target) ** 2
         
         # here we mask the NaN value (replace with 0)
         loss_tensor = torch.where(torch.isnan(loss_tensor), torch.tensor(0., device=loss_tensor.device), loss_tensor)
