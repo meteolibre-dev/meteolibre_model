@@ -26,6 +26,7 @@ tpu_use_sudo: false
 use_cpu: false
 --------------------------------------------------------------------
 """
+
 import sys
 import os
 import random
@@ -48,14 +49,17 @@ import torchvision
 import einops
 
 import trackio
+from ema_pytorch import EMA
 
 id_run = str(random.randint(0, 1000))
 
 from meteolibre_model.datasets.dataset_meteofrance_v4 import MeteoLibreMapDataset
-from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
+from meteolibre_model.dit.model_meteofrance_simplediffusion import (
+    Simple3DDiffusionModel,
+)
 
 # Configuration
-#PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
+# PATHDATA = ["/teamspace/studios/this_studio/data/hf_dataset/"]
 BATCH_SIZE = 16
 LEARNING_RATE = 5e-4
 NUM_WORKERS = 4
@@ -64,71 +68,89 @@ GRADIENT_ACCUMULATION_STEPS = 2
 GRADIENT_CLIP_VAL = 1.0
 LOG_EVERY_N_STEPS = 20
 SAVE_EVERY_N_EPOCHS = 5
-STEPS_PER_EPOCH = 6000  # Define steps per epoch for IterableDataset
-MODEL_DIR = "models/meteolibre_simplediffusion_multigpu_v3/"
+STEPS_PER_EPOCH = 3000  # Define steps per epoch for IterableDataset
+MODEL_DIR = "models/meteolibre_simplediffusion_multigpu_v4/"
 IMAGE_LOG_DIR = os.path.join(MODEL_DIR, "images")
 
 RANGE_VALUE = (-3, 3)
 
 def log_sample_image(model, batch, step, accelerator):
     os.makedirs(IMAGE_LOG_DIR, exist_ok=True)
-    
+
     model.eval()
     with torch.no_grad():
         x_image, _, _, _ = model.prepare_target(batch, accelerator.device)
-        input_meteo_frames = x_image[:, :model.nb_back]
+        input_meteo_frames = x_image[:, : model.nb_back]
 
         x_hour = batch["hour"].clone().detach().float().unsqueeze(1)
         x_minute = batch["minute"].clone().detach().float().unsqueeze(1)
-        
-        sample = model.sample(input_meteo_frames, x_hour, x_minute, deterministic=False, sampling_steps=500)
-        
+
+        sample = model.sample(
+            input_meteo_frames,
+            x_hour,
+            x_minute,
+            deterministic=False,
+            sampling_steps=256,
+        )
+
         # Assuming the radar channel is at index 5
         sample_radar = sample[0, :, 5, :, :]
-        sample_radar = einops.rearrange(sample_radar, 't h w -> t 1 h w')
-        
+        sample_radar = einops.rearrange(sample_radar, "t h w -> t 1 h w")
+
         save_path = os.path.join(IMAGE_LOG_DIR, f"sample_radar_step_{step}.png")
-        torchvision.utils.save_image(sample_radar, save_path, normalize=True, value_range=RANGE_VALUE)
+        torchvision.utils.save_image(
+            sample_radar, save_path, normalize=True, value_range=RANGE_VALUE
+        )
         accelerator.print(f"Saved sample image to {save_path}")
-        
+
         # Assuming the sat channel is at index -1
         sample_sat = sample[0, :, -1, :, :]
-        sample_sat = einops.rearrange(sample_sat, 't h w -> t 1 h w')
-        
+        sample_sat = einops.rearrange(sample_sat, "t h w -> t 1 h w")
+
         save_path = os.path.join(IMAGE_LOG_DIR, f"sample_sat_step_{step}.png")
-        torchvision.utils.save_image(sample_sat, save_path, normalize=True, value_range=RANGE_VALUE)
+        torchvision.utils.save_image(
+            sample_sat, save_path, normalize=True, value_range=RANGE_VALUE
+        )
         accelerator.print(f"Saved sample image to {save_path}")
-        
+
         # Assuming the lancover channel is at index 0
         sample_landcover = sample[0, :, 0, :, :]
-        sample_landcover = einops.rearrange(sample_landcover, 't h w -> t 1 h w')
-        
+        sample_landcover = einops.rearrange(sample_landcover, "t h w -> t 1 h w")
+
         save_path = os.path.join(IMAGE_LOG_DIR, f"sample_landcover_step_{step}.png")
-        torchvision.utils.save_image(sample_landcover, save_path, normalize=True, value_range=RANGE_VALUE)
+        torchvision.utils.save_image(
+            sample_landcover, save_path, normalize=True, value_range=RANGE_VALUE
+        )
         accelerator.print(f"Saved sample image to {save_path}")
 
         # Log target images for comparison
-        target_frames = x_image[0, model.nb_back:(model.nb_back + model.nb_future)]
+        target_frames = x_image[0, model.nb_back : (model.nb_back + model.nb_future)]
 
         # Assuming the radar channel is at index 5
         target_radar = target_frames[:, 5, :, :]
-        target_radar = einops.rearrange(target_radar, 't h w -> t 1 h w')
-        save_path = os.path.join(IMAGE_LOG_DIR, "target_radar_step.png")
-        torchvision.utils.save_image(target_radar, save_path, normalize=True, value_range=RANGE_VALUE)
+        target_radar = einops.rearrange(target_radar, "t h w -> t 1 h w")
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_radar_step_{step}.png")
+        torchvision.utils.save_image(
+            target_radar, save_path, normalize=True, value_range=RANGE_VALUE
+        )
         accelerator.print(f"Saved target radar image to {save_path}")
 
         # Assuming the sat channel is at index -1
         target_sat = target_frames[:, -1, :, :]
-        target_sat = einops.rearrange(target_sat, 't h w -> t 1 h w')
-        save_path = os.path.join(IMAGE_LOG_DIR, f"target_sat.png")
-        torchvision.utils.save_image(target_sat, save_path, normalize=True, value_range=RANGE_VALUE)
+        target_sat = einops.rearrange(target_sat, "t h w -> t 1 h w")
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_sat_step_{step}.png")
+        torchvision.utils.save_image(
+            target_sat, save_path, normalize=True, value_range=RANGE_VALUE
+        )
         accelerator.print(f"Saved target sat image to {save_path}")
 
         # Assuming the landcover channel is at index 0
         target_landcover = target_frames[:, 0, :, :]
-        target_landcover = einops.rearrange(target_landcover, 't h w -> t 1 h w')
-        save_path = os.path.join(IMAGE_LOG_DIR, f"target_landcover.png")
-        torchvision.utils.save_image(target_landcover, save_path, normalize=True, value_range=RANGE_VALUE)
+        target_landcover = einops.rearrange(target_landcover, "t h w -> t 1 h w")
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_landcover_{step}.png")
+        torchvision.utils.save_image(
+            target_landcover, save_path, normalize=True, value_range=RANGE_VALUE
+        )
         accelerator.print(f"Saved target landcover image to {save_path}")
     model.train()
 
@@ -137,19 +159,19 @@ def main():
     accelerator = Accelerator(
         mixed_precision="bf16",
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        log_with=["trackio", "tensorboard"],
+        log_with="tensorboard",
         dynamo_backend="no",
-        project_dir="."
+        project_dir=".",
     )
 
     hps = {"batch_size": BATCH_SIZE, "learning_rate": LEARNING_RATE}
-    
+
     accelerator.init_trackers("meteofrance-v-prediction-training_" + id_run, config=hps)
 
     localrepo = "/workspace/data"
     # Initialize Dataset and DataLoader
     dataset = MeteoLibreMapDataset(localrepo=localrepo)
-    
+
     train_dataloader = DataLoader(
         dataset,
         batch_size=BATCH_SIZE,
@@ -163,18 +185,25 @@ def main():
         parametrization="velocity",
         schedule="shifted_cosine",
     )
-    
-    #PATH = "/workspace/meteolibre_model/models/meteolibre_simplediffusion_multigpu_v2/epoch_35.safetensors"
-    #weights = load_file(PATH)
-    #model.load_state_dict(weights)
+
+    ema = EMA(
+        model,
+        beta=0.9999,
+        update_after_step=500,
+        update_every=10,
+    )
+
+    # PATH = "/workspace/meteolibre_model/models/meteolibre_simplediffusion_multigpu_v2/epoch_35.safetensors"
+    # weights = load_file(PATH)
+    # model.load_state_dict(weights)
 
     # Initialize Optimizer
     optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
-    #optimizer = ForeachMuon(model.parameters(), lr=LEARNING_RATE, warmup_steps=100, foreach=False)
+    # optimizer = ForeachMuon(model.parameters(), lr=LEARNING_RATE, warmup_steps=100, foreach=False)
 
     # Prepare for training with accelerate
-    model, optimizer, train_dataloader = accelerator.prepare(
-        model, optimizer, train_dataloader
+    model, ema, optimizer, train_dataloader = accelerator.prepare(
+        model, ema, optimizer, train_dataloader
     )
 
     # Training Loop
@@ -182,8 +211,13 @@ def main():
     for epoch in range(NUM_EPOCHS):
         model.train()
         # Use tqdm only on the main process for cleaner output
-        progress_bar = tqdm(train_dataloader, total=STEPS_PER_EPOCH, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}", disable=not accelerator.is_main_process)
-        
+        progress_bar = tqdm(
+            train_dataloader,
+            total=STEPS_PER_EPOCH,
+            desc=f"Epoch {epoch + 1}/{NUM_EPOCHS}",
+            disable=not accelerator.is_main_process,
+        )
+
         for step, batch in enumerate(progress_bar):
             if step >= STEPS_PER_EPOCH:
                 break
@@ -198,39 +232,52 @@ def main():
 
                 # This block only executes when int's time to update the model weights
                 if accelerator.sync_gradients:
-                    accelerator.clip_grad_norm_(model.parameters(), max_norm=GRADIENT_CLIP_VAL)
+                    accelerator.clip_grad_norm_(
+                        model.parameters(), max_norm=GRADIENT_CLIP_VAL
+                    )
                     optimizer.step()
                     optimizer.zero_grad()
 
+                    # Update the EMA model with the new weights
+                    if accelerator.is_main_process:
+                        unwrapped_ema_model = accelerator.unwrap_model(ema)
+                        unwrapped_ema_model.update()
+
                     # Increment global_step ONLY on a successful optimization step
                     global_step += 1
-                    
+
                     if global_step % LOG_EVERY_N_STEPS == 0:
                         if accelerator.is_main_process:
                             # Update the progress bar with the latest loss
                             progress_bar.set_postfix(loss=loss.item())
-                            
-                            accelerator.print(f"Epoch [{epoch+1}/{NUM_EPOCHS}], Global Step [{global_step}], Loss: {loss.item():.4f}")
+
+                            accelerator.print(
+                                f"Epoch [{epoch + 1}/{NUM_EPOCHS}], Global Step [{global_step}], Loss: {loss.item():.4f}"
+                            )
                             for loss_name, loss_value in losses.items():
-                                accelerator.log({loss_name: loss_value.item()}, step=global_step)
-                
+                                accelerator.log(
+                                    {loss_name: loss_value.item()}, step=global_step
+                                )
+
         # Synchronize all processes before logging images on the main process
         accelerator.wait_for_everyone()
-        
+
         # log image at the epoch end, only on the main process
         if accelerator.is_main_process:
-            unwrapped_model = accelerator.unwrap_model(model)
-            # Now the other GPUs are waiting politely instead of starting the next epoch
-            log_sample_image(unwrapped_model, batch, epoch, accelerator)
+            unwrapped_ema_model = accelerator.unwrap_model(ema)
+            # Use the EMA model for logging/sampling
+            log_sample_image(unwrapped_ema_model.ema_model, batch, epoch, accelerator)
+
 
         # This part for saving the model was already correct
         if (epoch + 1) % SAVE_EVERY_N_EPOCHS == 0:
             accelerator.wait_for_everyone()
             if accelerator.is_main_process:
-                unwrapped_model = accelerator.unwrap_model(model)
+                unwrapped_ema_model = accelerator.unwrap_model(ema)
+                # Save the EMA model's state dictionary
                 save_path = f"{MODEL_DIR}epoch_{epoch+1}.safetensors"
                 os.makedirs(MODEL_DIR, exist_ok=True)
-                save_file(unwrapped_model.state_dict(), save_path)
+                save_file(unwrapped_ema_model.ema_model.state_dict(), save_path)
                 accelerator.print(f"Model saved to {save_path}")
                 
         accelerator.wait_for_everyone()
@@ -243,7 +290,7 @@ def main():
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
         unwrapped_model = accelerator.unwrap_model(model)
-    
+
         # final_save_path = "diffusion_pytorch_model.safetensors"
         # save_file(unwrapped_model.state_dict(), final_save_path)
 
@@ -259,6 +306,7 @@ def main():
         #     print("Model successfully uploaded to Hugging Face Hub.")
         # except Exception as e:
         #     print(f"Failed to upload model to Hugging Face Hub: {e}")
+
 
 if __name__ == "__main__":
     main()
