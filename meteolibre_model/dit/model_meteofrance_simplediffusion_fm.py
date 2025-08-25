@@ -176,7 +176,7 @@ class Simple3DDiffusionModel(nn.Module):
             x_image = torch.cat(
                 (groundheight, landcover, radar_data, groundstation_data, satellite_data), dim=-1
             )
-            x_image = x_image.permute(0, 1, 4, 2, 3)
+            x_image = x_image.permute(0, 1, 4, 2, 3) # B T C W H
 
             x_image_corrupt = torch.cat(
                 (groundheight, landcover, radar_data, groundstation_data_corrupt),
@@ -193,26 +193,9 @@ class Simple3DDiffusionModel(nn.Module):
 
         return x_image, x_image_corrupt, mask_radar, mask_groundstation
 
-    def init_prior(self, shape_target, device):
-        return torch.randn((shape_target)).to(device)
+    def init_prior(self, shape_target, device, input_meteo_frames):
+        return input_meteo_frames[:, [-1], :, :, :].repeat(1, shape_target[1], 1, 1, 1)
     
-    def logsnr_schedule_cosine(self, t, logsnr_min=-15, logsnr_max=15):
-        t_min = math.atan(math.exp(-0.5 * logsnr_max))
-        t_max = math.atan(math.exp(-0.5 * logsnr_min))
-        return -2 * log(torch.tan(t_min + t * (t_max - t_min)))
-
-    def logsnr_schedule_cosine_shifted(self, t):
-        logsnr_t = self.logsnr_schedule_cosine(t)
-        return logsnr_t + 2 * math.log(self.noise_d / self.image_d)
-
-    def get_logsnr(self, t):
-        if self.schedule == "cosine":
-            return self.logsnr_schedule_cosine(t)
-        elif self.schedule == "shifted_cosine":
-            return self.logsnr_schedule_cosine_shifted(t).clamp(min=-15, max=15)
-        else:
-            raise ValueError("scheduler not handle")
-
     def compute_loss(self, batch, device):
         x_image, _, _, mask_groundstation = self.prepare_target(batch, device)
         batch_size = x_image.shape[0]
@@ -222,50 +205,28 @@ class Simple3DDiffusionModel(nn.Module):
         target_meteo_frames = x_image[:, self.nb_back : (self.nb_back + self.nb_future)]
         input_meteo_frames = x_image[:, : self.nb_back]
 
-        eps_t = self.init_prior(target_meteo_frames.shape, device)
+        start_last_frame = self.init_prior(target_meteo_frames.shape, device, input_meteo_frames)
 
         t = stratified_uniform_sample(batch_size, device=device)
 
-        logsnr_t = self.get_logsnr(t)
+        t = t.view(-1, 1, 1, 1, 1)
 
-        alpha_t = torch.sqrt(torch.sigmoid(logsnr_t))
-        sigma_t = torch.sqrt(torch.sigmoid(-logsnr_t))
-
-        alpha_t = alpha_t.view(-1, 1, 1, 1, 1)
-        sigma_t = sigma_t.view(-1, 1, 1, 1, 1)
-
-        x_t = alpha_t * target_meteo_frames + sigma_t * eps_t
+        x_t = t * target_meteo_frames + (1 - t) * start_last_frame
         input_model = torch.cat([input_meteo_frames, x_t], dim=1)
 
         x_hour = batch["hour"].clone().detach().float().unsqueeze(1)
         x_minute = batch["minute"].clone().detach().float().unsqueeze(1)
-        logsnr_t_unsq = logsnr_t.unsqueeze(1)
-        x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq / 10.], dim=1)
+        t_unsq = t.unsqueeze(1)
+        x_scalar = torch.cat([x_hour, x_minute, t], dim=1)
 
         pred = self.forward(input_model.float(), x_scalar.float())
 
-        if self.parametrization == "velocity":
-            proxy_pred = pred
-            target = alpha_t * eps_t - sigma_t * target_meteo_frames
-        elif self.parametrization == "noisy":
-            proxy_pred = pred
-            target = eps_t
-        elif self.parametrization == "endpoint":
-            proxy_pred = (x_t - alpha_t * pred) / sigma_t
-            target = eps_t
-        else:
-            raise ValueError("parametrization not handled")
-
-        snr = torch.exp(logsnr_t).clamp(max=5)
-        if self.parametrization == "velocity":
-            #weight = F.sigmoid(-1.5 - logsnr_t) * F.sigmoid(logsnr_t)
-            weight = torch.ones_like(logsnr_t)
-        else:
-            weight = F.sigmoid(-1.5 - logsnr_t) #1 / (1 + snr) 
+        proxy_pred = pred
+        target = target_meteo_frames - start_last_frame
 
         weight = weight.view(-1, 1, 1, 1, 1)
         loss_tensor = weight * (proxy_pred - target) ** 2
-        
+
         # here we mask the NaN value (replace with 0)
         loss_tensor = torch.where(torch.isnan(loss_tensor), torch.tensor(0., device=loss_tensor.device), loss_tensor)
         
@@ -321,31 +282,6 @@ class Simple3DDiffusionModel(nn.Module):
         return torch.clamp(x, -3, 3)
 
     @torch.no_grad()
-    def ddpm_sampler_step(self, z_t, pred, logsnr_t, logsnr_s):
-        """
-        Function to perform a single step of the DDPM sampler.
-        """
-        c = -expm1(logsnr_t - logsnr_s)
-        alpha_t = torch.sqrt(torch.sigmoid(logsnr_t))
-        alpha_s = torch.sqrt(torch.sigmoid(logsnr_s))
-        sigma_t = torch.sqrt(torch.sigmoid(-logsnr_t))
-        sigma_s = torch.sqrt(torch.sigmoid(-logsnr_s))
-
-        if self.parametrization == 'velocity':
-            x_pred = alpha_t * z_t - sigma_t * pred
-        elif self.parametrization == 'noisy':
-            x_pred = (z_t - sigma_t * pred) / alpha_t
-        else:
-            raise ValueError("parametrization not handled")
-
-        x_pred = self.clip(x_pred)
-
-        mu = alpha_s * (z_t * (1 - c) / alpha_t + c * x_pred)
-        variance = (sigma_s ** 2) * c
-
-        return mu, variance
-
-    @torch.no_grad()
     def sample(
         self,
         input_meteo_frames,
@@ -353,7 +289,6 @@ class Simple3DDiffusionModel(nn.Module):
         x_minute,
         sampling_steps=100,
         schedule_type="linear",
-        deterministic=True,
         visualize_path=None,
     ):
         """
@@ -370,57 +305,28 @@ class Simple3DDiffusionModel(nn.Module):
             self.shape_image,
         )
 
-        z_t = torch.randn(target_shape, device=device)
+        z_t = self.init_prior(shape_target, device, input_meteo_frames)
 
         if visualize_path:
             os.makedirs(visualize_path, exist_ok=True)
 
         if schedule_type == "linear":
             steps = torch.linspace(1.0, 0.0, sampling_steps + 1, device=device)
-        elif schedule_type == "logsnr":
-            logsnr_min = self.get_logsnr(torch.tensor(1.0, device=device))
-            logsnr_max = self.get_logsnr(torch.tensor(0.0, device=device))
-            logsnr_steps = torch.linspace(
-                logsnr_min, logsnr_max, sampling_steps + 1, device=device
-            )
-
-            t_min = torch.atan(torch.exp(-0.5 * logsnr_max))
-            t_max = torch.atan(torch.exp(-0.5 * logsnr_min))
-
-            inv_logsnr = torch.exp(-0.5 * logsnr_steps)
-            t_from_logsnr = (torch.atan(inv_logsnr) - t_min) / (t_max - t_min)
-            steps = t_from_logsnr
         else:
             raise ValueError(f"Unknown schedule type: {schedule_type}")
 
         for i in range(sampling_steps):
-            u_t_val = steps[i]
-            u_s_val = steps[i + 1]
+            t = steps[i]
 
-            u_t = torch.full((batch_size,), u_t_val, device=device)
+            u_t = torch.full((batch_size,), t, device=device)
 
-            logsnr_t = self.get_logsnr(u_t)
-            logsnr_s = self.get_logsnr(
-                torch.full((batch_size,), u_s_val, device=device)
-            )
-
-            logsnr_t_unsq = logsnr_t.unsqueeze(1)
-            x_scalar = torch.cat([x_hour, x_minute, logsnr_t_unsq / 10.], dim=1)
+            u_t_unsq = u_t.unsqueeze(1)
+            x_scalar = torch.cat([x_hour, x_minute, u_t_unsq], dim=1)
 
             input_model = torch.cat([input_meteo_frames, z_t], dim=1)
             pred = self.forward(input_model, x_scalar)
 
-            logsnr_t = logsnr_t.view(-1, 1, 1, 1, 1)
-            logsnr_s = logsnr_s.view(-1, 1, 1, 1, 1)
-
-            mu, variance = self.ddpm_sampler_step(z_t, pred, logsnr_t, logsnr_s)
-
-            # For the last step, u_s_val is 0, which should be deterministic.
-            if u_s_val > 0 and not deterministic:
-                # Add small value to variance to avoid sqrt(0) which can be unstable
-                z_t = mu + torch.sqrt(variance.clamp(min=1e-8)) * torch.randn_like(mu)
-            else:
-                z_t = mu
+            z_t = z_t + 1. / sampling_steps * pred
 
             if visualize_path:
                 # Visualize the first satellite channel (13) of the first future frame for the first batch item.

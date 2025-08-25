@@ -47,6 +47,10 @@ import os
 import torchvision
 import einops
 
+import trackio
+
+id_run = str(random.randint(0, 1000))
+
 from meteolibre_model.datasets.dataset_meteofrance_v4 import MeteoLibreMapDataset
 from meteolibre_model.dit.model_meteofrance_simplediffusion import Simple3DDiffusionModel
 
@@ -109,21 +113,21 @@ def log_sample_image(model, batch, step, accelerator):
         # Assuming the radar channel is at index 5
         target_radar = target_frames[:, 5, :, :]
         target_radar = einops.rearrange(target_radar, 't h w -> t 1 h w')
-        save_path = os.path.join(IMAGE_LOG_DIR, f"target_radar_step_{step}.png")
+        save_path = os.path.join(IMAGE_LOG_DIR, "target_radar_step.png")
         torchvision.utils.save_image(target_radar, save_path, normalize=True, value_range=RANGE_VALUE)
         accelerator.print(f"Saved target radar image to {save_path}")
 
         # Assuming the sat channel is at index -1
         target_sat = target_frames[:, -1, :, :]
         target_sat = einops.rearrange(target_sat, 't h w -> t 1 h w')
-        save_path = os.path.join(IMAGE_LOG_DIR, f"target_sat_step_{step}.png")
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_sat.png")
         torchvision.utils.save_image(target_sat, save_path, normalize=True, value_range=RANGE_VALUE)
         accelerator.print(f"Saved target sat image to {save_path}")
 
         # Assuming the landcover channel is at index 0
         target_landcover = target_frames[:, 0, :, :]
         target_landcover = einops.rearrange(target_landcover, 't h w -> t 1 h w')
-        save_path = os.path.join(IMAGE_LOG_DIR, f"target_landcover_step_{step}.png")
+        save_path = os.path.join(IMAGE_LOG_DIR, f"target_landcover.png")
         torchvision.utils.save_image(target_landcover, save_path, normalize=True, value_range=RANGE_VALUE)
         accelerator.print(f"Saved target landcover image to {save_path}")
     model.train()
@@ -133,13 +137,14 @@ def main():
     accelerator = Accelerator(
         mixed_precision="bf16",
         gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
-        log_with="tensorboard",
+        log_with=["trackio", "tensorboard"],
         dynamo_backend="no",
         project_dir="."
     )
 
     hps = {"batch_size": BATCH_SIZE, "learning_rate": LEARNING_RATE}
-    accelerator.init_trackers("tb_simplediffusion_multigpu_" +  str(random.randint(0, 1000)), config=hps)
+    
+    accelerator.init_trackers("meteofrance-v-prediction-training_" + id_run, config=hps)
 
     localrepo = "/workspace/data"
     # Initialize Dataset and DataLoader
@@ -155,13 +160,13 @@ def main():
 
     # Initialize Model
     model = Simple3DDiffusionModel(
-        parametrization="noisy",
+        parametrization="velocity",
         schedule="shifted_cosine",
     )
     
-    PATH = "/workspace/meteolibre_model/models/meteolibre_simplediffusion_multigpu_v2/epoch_35.safetensors"
-    weights = load_file(PATH)
-    model.load_state_dict(weights)
+    #PATH = "/workspace/meteolibre_model/models/meteolibre_simplediffusion_multigpu_v2/epoch_35.safetensors"
+    #weights = load_file(PATH)
+    #model.load_state_dict(weights)
 
     # Initialize Optimizer
     optimizer = AdamW(model.parameters(), lr=LEARNING_RATE)
@@ -179,22 +184,9 @@ def main():
         # Use tqdm only on the main process for cleaner output
         progress_bar = tqdm(train_dataloader, total=STEPS_PER_EPOCH, desc=f"Epoch {epoch+1}/{NUM_EPOCHS}", disable=not accelerator.is_main_process)
         
-        
-        
-        
         for step, batch in enumerate(progress_bar):
             if step >= STEPS_PER_EPOCH:
                 break
-            
-            # Synchronize all processes before logging images on the main process
-            accelerator.wait_for_everyone()
-            
-            # log image at the epoch end, only on the main process
-            if accelerator.is_main_process:
-                unwrapped_model = accelerator.unwrap_model(model)
-                # Now the other GPUs are waiting politely instead of starting the next epoch
-                log_sample_image(unwrapped_model, batch, epoch, accelerator)
-            accelerator.wait_for_everyone()
 
             with accelerator.accumulate(model):
                 # Unwrap the model to access custom methods like compute_loss

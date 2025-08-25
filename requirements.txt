@@ -7,7 +7,6 @@ pyarrow
 datasets==4.0
 huggingface_hub[cli]
 timm
-#wandb
 imageio
 diffusers
 einops
@@ -15,3 +14,4 @@ heavyball
 safetensors
 dit_ml
 tensorboard
+trackio
