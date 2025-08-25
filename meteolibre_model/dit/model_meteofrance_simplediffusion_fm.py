@@ -209,22 +209,22 @@ class Simple3DDiffusionModel(nn.Module):
 
         t = stratified_uniform_sample(batch_size, device=device)
 
-        t = t.view(-1, 1, 1, 1, 1)
+        t_image = t.view(-1, 1, 1, 1, 1)
 
-        x_t = t * target_meteo_frames + (1 - t) * start_last_frame
+        x_t = t_image * target_meteo_frames + (1. - t_image) * start_last_frame
         input_model = torch.cat([input_meteo_frames, x_t], dim=1)
 
         x_hour = batch["hour"].clone().detach().float().unsqueeze(1)
         x_minute = batch["minute"].clone().detach().float().unsqueeze(1)
         t_unsq = t.unsqueeze(1)
-        x_scalar = torch.cat([x_hour, x_minute, t], dim=1)
+        x_scalar = torch.cat([x_hour, x_minute, t_unsq], dim=1)
 
         pred = self.forward(input_model.float(), x_scalar.float())
 
         proxy_pred = pred
         target = target_meteo_frames - start_last_frame
 
-        weight = weight.view(-1, 1, 1, 1, 1)
+        weight = 1. #weight.view(-1, 1, 1, 1, 1)
         loss_tensor = weight * (proxy_pred - target) ** 2
 
         # here we mask the NaN value (replace with 0)

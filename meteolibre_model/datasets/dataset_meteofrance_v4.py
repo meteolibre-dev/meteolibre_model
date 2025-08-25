@@ -118,7 +118,8 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
 
                 # Create a generator with a seed unique to this worker and the base seed
                 g = torch.Generator()
-                seed = self.seed + worker_id + rank * worker_info.num_workers
+                
+                seed = self.seed + worker_id + rank * worker_info.num_workers # + round(datetime.now().timestamp() * 1000)
                 g.manual_seed(seed)
                 
                 # Get a random permutation of indices and apply it to the file list
