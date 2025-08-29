@@ -7,10 +7,11 @@ import os
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
+from torchvision.utils import make_grid
 from accelerate import Accelerator
 from accelerate.utils import set_seed, ProjectConfiguration, LoggerType
 from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
-from meteolibre_model.diffusion.diffusion import trainer_step
+from meteolibre_model.diffusion.diffusion import trainer_step, full_image_generation
 from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
 
 
@@ -41,7 +42,7 @@ def main():
     # Initialize dataset
     dataset = MeteoLibreMapDataset(
         localrepo="path/to/your/dataset",  # Replace with your dataset path
-        records_per_file=50,
+        records_per_file=128,
         cache_size=8,
         seed=seed,
     )
@@ -106,6 +107,28 @@ def main():
 
         # Print epoch statistics
         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}")
+
+        if accelerator.is_main_process:
+            with torch.no_grad():
+                permuted_batch_data = batch["patch_data"].permute(0, 2, 1, 3, 4)
+                x_context = permuted_batch_data[:, :, :4]
+                x_target = permuted_batch_data[:, :, 4:]
+
+                unwrapped_model = accelerator.unwrap_model(model)
+                generated_images = full_image_generation(
+                    unwrapped_model, x_context, device=accelerator.device
+                )
+
+                # Select one channel and one batch item for visualization
+                generated_sample = generated_images[0, 0]  # Shape: (2, H, W)
+                target_sample = x_target[0, 0].cpu()  # Shape: (2, H, W)
+
+                all_frames = torch.cat([generated_sample, target_sample], dim=0)
+                grid = make_grid(all_frames.unsqueeze(1), nrow=2)
+
+                tb_tracker = accelerator.get_tracker("tensorboard")
+                if tb_tracker:
+                    tb_tracker.add_image("Generated vs Target", grid, epoch)
 
     # Save the model
     accelerator.wait_for_everyone()
