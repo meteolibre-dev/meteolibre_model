@@ -1,0 +1,17 @@
+[project]
+name = "meteolibre-model"
+version = "0.1.0"
+description = "MeteoLibre Model"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "pandas",
+    "numpy",
+    "datasets",
+    "torch",
+    "accelerate",
+    "tqdm"
+]
+
+[tool.setuptools]
+packages = ["meteolibre_model"]
