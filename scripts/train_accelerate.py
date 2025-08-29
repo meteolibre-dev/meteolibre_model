@@ -94,6 +94,7 @@ def main():
                     {"Loss/train_trained": loss.item()},
                     step=epoch * len(dataloader) + idx,
                 )
+                
 
                 total_loss += loss.item()
 
