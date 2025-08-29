@@ -1,7 +1,43 @@
 """
 In this module we will use helper to create a proper diffusion setupcre
 """
+
 import torch
+
+MEAN_CHANNEL = torch.tensor(
+    [
+        0.93817195,
+        1.19817447,
+        0.12322853,
+        0.93354392,
+        0.26123831,
+        36.65962429,
+        28.19503977,
+        62.73929266,
+        80.87527095,
+        71.9558302,
+        2.5896961,
+        11.48664509,
+    ]
+)
+
+STD_CHANNEL = torch.tensor(
+    [
+        1.27078496,
+        1.8195922,
+        0.38173912,
+        1.47627378,
+        0.18876226,
+        12.46953485,
+        7.98968902,
+        18.21728238,
+        20.43442948,
+        14.30025048,
+        0.59147741,
+        3.12146046,
+    ]
+)
+
 
 def trainer_step(model, batch_data):
     """
@@ -21,7 +57,7 @@ def trainer_step(model, batch_data):
     batch_data = batch_data.permute(0, 2, 1, 3, 4)
 
     x_context = batch_data[:, :, :4]  # Shape: (BATCH, NB_CHANNEL, 4, H, W)
-    x_target = batch_data[:, :, 4:]   # Shape: (BATCH, NB_CHANNEL, 2, H, W)
+    x_target = batch_data[:, :, 4:]  # Shape: (BATCH, NB_CHANNEL, 2, H, W)
 
     # 1. Generate the prior / noise (z)
     z = torch.randn_like(x_target)
@@ -38,7 +74,9 @@ def trainer_step(model, batch_data):
 
     # 4. Put the scalar values and the video values in the model and output the velocity
     # The model input is the concatenation of the context and the interpolated target.
-    model_input = torch.cat([x_context, x_t], dim=2) # Shape: (BATCH, NB_CHANNEL, 6, H, W)
+    model_input = torch.cat(
+        [x_context, x_t], dim=2
+    )  # Shape: (BATCH, NB_CHANNEL, 6, H, W)
 
     # The model is expected to take the combined video and the timestep t.
     # NOTE: Your UNet_DCAE_3D model needs to be adapted to accept the timestep `t`

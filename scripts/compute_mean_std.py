@@ -17,7 +17,7 @@ def compute_mean_std():
 
     # Use a smaller subset for quick estimation, or iterate over the whole dataset
     # for a more accurate result. Set num_samples to None to iterate over everything.
-    num_samples = 1000  # Or None
+    num_samples = 20000  # Or None
 
     print(f"Calculating mean and std over {num_samples or 'all'} samples, ignoring -10000...")
 
@@ -31,7 +31,7 @@ def compute_mean_std():
         ).reshape(example["shape"])
 
         # Ensure patch_data is float64 for precision in sums
-        patch_data = patch_data.astype(np.float64)
+        patch_data = patch_data.astype(np.float32)
 
         # Mask out the -10000 values
         masked_patch_data = np.ma.masked_equal(patch_data, -10000.0)
