@@ -4,40 +4,6 @@ In this module we will use helper to create a proper diffusion setupcre
 
 import torch
 
-MEAN_CHANNEL = torch.tensor(
-    [
-        0.93817195,
-        1.19817447,
-        0.12322853,
-        0.93354392,
-        0.26123831,
-        36.65962429,
-        28.19503977,
-        62.73929266,
-        80.87527095,
-        71.9558302,
-        2.5896961,
-        11.48664509,
-    ]
-)
-
-STD_CHANNEL = torch.tensor(
-    [
-        1.27078496,
-        1.8195922,
-        0.38173912,
-        1.47627378,
-        0.18876226,
-        12.46953485,
-        7.98968902,
-        18.21728238,
-        20.43442948,
-        14.30025048,
-        0.59147741,
-        3.12146046,
-    ]
-)
-
 
 def trainer_step(model, batch_data):
     """
@@ -70,7 +36,8 @@ def trainer_step(model, batch_data):
     t_reshaped = t.view(-1, 1, 1, 1, 1)
 
     # 3. Create the interpolated data for the last two frames
-    x_t = (1 - t_reshaped) * x_0 + t_reshaped * x_1
+    t_squared_reshaped = (t**2).view(-1, 1, 1, 1, 1)
+    x_t = (1 - t_squared_reshaped) * x_0 + t_squared_reshaped * x_1
 
     # 4. Put the scalar values and the video values in the model and output the velocity
     # The model input is the concatenation of the context and the interpolated target.
@@ -84,7 +51,7 @@ def trainer_step(model, batch_data):
     predicted_velocity = model(model_input, t)
 
     # 5. Apply loss function
-    target_velocity = x_1 - x_0
+    target_velocity = 2 * t_reshaped * (x_1 - x_0)
     loss = torch.nn.functional.mse_loss(predicted_velocity, target_velocity)
 
     return loss
