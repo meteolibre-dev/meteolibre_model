@@ -175,9 +175,9 @@ class UNet_DCAE_3D(nn.Module):
 
         # --- Time Embedding ---
         self.time_mlp = nn.Sequential(
-            SinusoidalPosEmb(context_dim),
-            nn.Linear(context_dim, context_dim),
-            nn.ReLU()
+            nn.Linear(context_dim, 128),
+            nn.ReLU(),
+            nn.Linear(128, context_dim)
         )
 
         self.encoder_convs = nn.ModuleList()

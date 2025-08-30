@@ -8,23 +8,19 @@ import os
 import json
 import glob
 from collections import OrderedDict
+import bisect
 
 import numpy as np
 from numpy.random import default_rng
 import random
+import pyarrow.parquet as pq
 
 from datasets import load_dataset
 from torch.utils.data import DataLoader, get_worker_info
 import torch
 import torch.distributed as dist
 
-STATISTIC_SATELLITE_MEAN = torch.tensor([0.1108, 0.1524, 0.0602, 0.1168])
-STATISTIC_SATELLITE_STD = torch.tensor([0.0839, 0.1506, 0.0383, 0.0990])
-
-
-STATISTIC_RADAR_MEAN = 0.008580314926803112
-STATISTIC_RADAR_STD = 0.1423337459564209
-
+from suncalc import get_position, get_times
 
 class MeteoLibreMapDataset(torch.utils.data.Dataset):
     """
@@ -37,15 +33,13 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
 
     Args:
         localrepo (str): The path to the local repository.
-        records_per_file (int): The fixed number of records in each Parquet file.
         cache_size (int): The number of DataFrames to keep in the in-memory cache.
         seed (int): A base seed used to ensure reproducible shuffling across runs.
                     Each worker's shuffle seed will be `seed + worker_id`.
     """
-    def __init__(self, localrepo: str, records_per_file: int = 50, cache_size: int = 8, seed: int = 42):
+    def __init__(self, localrepo: str, cache_size: int = 8, seed: int = 42):
         super().__init__()
         self.localrepo = localrepo
-        self.records_per_file = records_per_file
         self.cache_size = cache_size
         self.seed = seed # Store base seed
 
@@ -54,7 +48,7 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         self.base_file_paths = sorted(glob.glob(data_path))
         
         # we remove the last one 
-        self.base_file_paths = self.base_file_paths[:-1]
+        self.base_file_paths = self.base_file_paths
 
 
         if not self.base_file_paths:
@@ -65,8 +59,12 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         # Initialize an LRU cache for this worker
         self.cache = OrderedDict()
 
-        # Calculate the total number of records
-        self.total_records = len(self.file_paths) * self.records_per_file
+        # Calculate the total number of records by inspecting each file
+        self.records_per_file_list = [sum(p.count_rows() for p in pq.ParquetDataset(fp).fragments) for fp in self.base_file_paths]
+        self.total_records = sum(self.records_per_file_list)
+        
+        # Create a cumulative sum of records to quickly find the file for an index
+        self.cumulative_records = np.cumsum([0] + self.records_per_file_list[:-1]).tolist()
 
     def __len__(self) -> int:
         return self.total_records
@@ -84,13 +82,18 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
             self.cache.popitem(last=False)
         return data_df
 
-    def _preprocess(self, record: pd.Series) -> dict:
+    def _preprocess(self, date, record: pd.Series) -> dict:
         patch_data = np.frombuffer(record["data"], dtype=record["dtype"]).reshape(record["shape"])
 
-        # TODO complete with context value later
+        # now we try to retrieve the longitude latitude of the patch to get the sun orientation on the patches
+        long = record["x_coord"] # longitude
+        lat = record["y_coord"] # latitude
+
+        result = get_position(date, long, lat)
 
         return {
-            "patch_data": patch_data
+            "patch_data": patch_data,
+            "spatial_position": torch.tensor([result["azimuth"], result["altitude"], lat/10.])
         }
 
     def __getitem__(self, index: int) -> dict:
@@ -122,12 +125,24 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         if index < 0 or index >= self.total_records:
             raise IndexError(f"Index {index} out of range for dataset with size {self.total_records}")
 
-        file_index = index // self.records_per_file
-        row_index_in_file = index % self.records_per_file
+        file_index = bisect.bisect_right(self.cumulative_records, index) - 1
+        row_index_in_file = index - self.cumulative_records[file_index]
+        
+        # get date from file name 
+        file_path = self.file_paths[file_index]
+        filename = os.path.basename(file_path)
+        date_str = filename.split("_")[0]
+        date = datetime.strptime(date_str, "%Y%m%d%H%M%S")
+        
         data_df = self._get_dataframe(file_index)
+
+        record = data_df.iloc[row_index_in_file]
+        return self._preprocess(date, record)
+
         try:
             record = data_df.iloc[row_index_in_file]
-            return self._preprocess(record)
+            return self._preprocess(date, record)
         except Exception as e:
+            
             print(f"Bad indexing for index {index}, file_index {file_index}, row_index {row_index_in_file}. Error: {e}")
-            return self.__getitem__((index + 1) % self.total_records)
+            return self.__getitem__((index + 64) % self.total_records)

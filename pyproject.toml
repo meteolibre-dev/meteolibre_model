@@ -10,7 +10,11 @@ dependencies = [
     "datasets",
     "torch",
     "accelerate",
-    "tqdm"
+    "tqdm",
+    "torchvision>=0.23.0",
+    "huggingface_hub[cli]>=0.0.1",
+    "suncalc>=0.1.3",
+    "scipy>=1.15.3",
 ]
 
 [tool.setuptools]

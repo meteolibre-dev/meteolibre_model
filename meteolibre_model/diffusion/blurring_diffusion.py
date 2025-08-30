@@ -101,7 +101,7 @@ def add_blurry_noise(image: np.ndarray, t: float, sigma_b_max: float) -> np.ndar
 # --- Helper function to add standard isotropic noise (for comparison) ---
 
 
-def trainer_step(model, batch_data):
+def trainer_step(model, batch, device):
     """
     Performs a single training step for a blurring diffusion model.
 
@@ -116,7 +116,7 @@ def trainer_step(model, batch_data):
         The loss value for the training step.
     """
     # The model expects (BATCH, NB_CHANNEL, NB_TEMPORAL, H, W), so permute dimensions
-    batch_data = batch_data.permute(0, 2, 1, 3, 4)
+    batch_data = batch["patch_data"].permute(0, 2, 1, 3, 4)
 
     x_context = batch_data[:, :, :4]  # Shape: (BATCH, NB_CHANNEL, 4, H, W)
     x_target = batch_data[:, :, 4:]   # This is x_0, shape: (BATCH, NB_CHANNEL, 2, H, W)
@@ -172,11 +172,14 @@ def trainer_step(model, batch_data):
         [x_context, x_t_batch], dim=2
     )  # Shape: (BATCH, NB_CHANNEL, 6, H, W)
 
+    context_info = batch["spatial_position"]
+    context_global = torch.cat([context_info, t_batch.unsqueeze(1)], dim=1)
+
     # The model predicts the noise `epsilon` based on the noisy image `x_t` and timestep `t`.
-    predicted_noise = model(model_input, t_batch)
+    predicted_noise = model(model_input.float(), context_global.float())
 
     # 5. Apply loss function (MSE between actual and predicted noise)
-    loss = torch.nn.functional.mse_loss(predicted_noise, noise)
+    loss = torch.nn.functional.mse_loss(predicted_noise, noise.float())
 
     return loss
 

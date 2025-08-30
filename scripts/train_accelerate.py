@@ -2,7 +2,7 @@
 Training script for MeteoLibre using Hugging Face Accelerate.
 This script trains a rectified flow model using the MeteoLibreMapDataset and UNet_DCAE_3D.
 """
-
+import sys
 import os
 import torch
 import torch.nn as nn
@@ -10,8 +10,14 @@ from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 from accelerate import Accelerator
 from accelerate.utils import set_seed, ProjectConfiguration, LoggerType
+
+# Add project root to sys.path
+project_root = os.path.abspath("/workspace/meteolibre_model/")
+sys.path.insert(0, project_root)
+
+
 from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
-from meteolibre_model.diffusion.diffusion import trainer_step, full_image_generation
+from meteolibre_model.diffusion.blurring_diffusion import trainer_step, full_image_generation
 from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
 
 
@@ -41,8 +47,7 @@ def main():
 
     # Initialize dataset
     dataset = MeteoLibreMapDataset(
-        localrepo="path/to/your/dataset",  # Replace with your dataset path
-        records_per_file=128,
+        localrepo="/workspace/data/data",  # Replace with your dataset path
         cache_size=8,
         seed=seed,
     )
@@ -52,7 +57,7 @@ def main():
         dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=os.cpu_count() // 2,  # Use half the available CPUs
+        num_workers=1, #os.cpu_count() // 2,  # Use half the available CPUs
         pin_memory=True,
     )
 
@@ -61,7 +66,7 @@ def main():
         in_channels=12,  # Adjust based on your data
         out_channels=12,  # Adjust based on your data
         features=[32, 64, 128, 256],
-        context_dim=5,
+        context_dim=4,
         context_frames=4,
     )
 
@@ -77,12 +82,10 @@ def main():
         total_loss = 0.0
 
         for idx, batch in enumerate(dataloader):
-            # Move batch to device
-            batch_data = batch["patch_data"].to(device)
 
             # Perform training step
             with accelerator.accumulate(model):
-                loss = trainer_step(model, batch_data)
+                loss = trainer_step(model, batch, device)
                 accelerator.backward(loss)
 
                 # Gradient clipping
@@ -95,7 +98,7 @@ def main():
                     {"Loss/train_trained": loss.item()},
                     step=epoch * len(dataloader) + idx,
                 )
-                
+
 
                 total_loss += loss.item()
 
