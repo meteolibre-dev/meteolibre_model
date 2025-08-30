@@ -12,7 +12,7 @@ from PIL import Image
 from meteolibre_model.diffusion.utils import MEAN_CHANNEL, STD_CHANNEL
 
 # -- Parameters --
-BLUR_SIGMA_MAX = 0.05 
+BLUR_SIGMA_MAX = 1. 
 
 # --- Step 1: Corrected schedule calculation ---
 def get_blurring_diffusion_schedules(
@@ -50,10 +50,10 @@ def get_blurring_diffusion_schedules(
 
         # Calculate frequencies (lambda)
         # Note: The paper's appendix implies standard frequency calculation, not pi * freqs
-        freqs_h = np.fft.fftfreq(height) * height
-        freqs_w = np.fft.fftfreq(width) * width
-        lambda_h = (2 * np.pi * freqs_h) ** 2
-        lambda_w = (2 * np.pi * freqs_w) ** 2
+        freqs_h = np.pi * np.linspace(0 , height -1 , height ) / height
+        freqs_w = np.pi * np.linspace(0 , height -1 , height ) / height
+        lambda_h = (freqs_h) ** 2 #(2 * np.pi * freqs_h) ** 2
+        lambda_w = (freqs_w) ** 2#(2 * np.pi * freqs_w) ** 2
         lambda_2d = lambda_h[:, np.newaxis] + lambda_w[np.newaxis, :]
 
         # d_t = (1 - d_min) * exp(-lambda * tau_t) + d_min
@@ -117,10 +117,10 @@ def trainer_step(model, batch, device):
     # normalize using MEAN and STD
     batch_data = (
         batch_data - MEAN_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
-    ) / STD_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
+    ) / STD_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device) * 4.
 
     # garde fou
-    batch_data = batch_data.clamp(-4, 4)
+    batch_data = batch_data.clamp(-8, 8)
 
     x_context = batch_data[:, :, :4]  # Shape: (BATCH, NB_CHANNEL, 4, H, W)
     x_target = batch_data[:, :, 4:]  # This is x_0, shape: (BATCH, NB_CHANNEL, 2, H, W)
@@ -196,7 +196,7 @@ def trainer_step(model, batch, device):
     return loss
 
 
-def full_image_generation(model, x_context, steps=1000, device="cuda"):
+def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
     """
     Generates full images using the DDPM ancestral sampler for Blurring Diffusion.
 
@@ -217,6 +217,8 @@ def full_image_generation(model, x_context, steps=1000, device="cuda"):
     model.to(device)
     x_context = x_context.to(device)
 
+    context_info = batch["spatial_position"].to(device)
+
     batch_size, nb_channel, _, h, w = x_context.shape
     delta = 1e-8  # Small constant for numerical stability [cite: 472]
 
@@ -231,10 +233,12 @@ def full_image_generation(model, x_context, steps=1000, device="cuda"):
         # Create a tensor for the current timestep
         t_batch = torch.full((batch_size,), t_val, device=device, dtype=torch.float32)
 
+        context_global = torch.cat([context_info, t_batch.unsqueeze(1)], dim=1)
+
         # Get the model's noise prediction
         model_input = torch.cat([x_context, z_t], dim=2)
         with torch.no_grad():
-            hat_eps_t = model(model_input, t_batch)
+            hat_eps_t = model(model_input.float(), context_global.float())
 
         # --- Prepare for denoising calculation in frequency space ---
         # Convert current state and predicted noise to numpy for DCT

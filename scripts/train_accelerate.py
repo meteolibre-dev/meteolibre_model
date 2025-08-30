@@ -37,7 +37,7 @@ def main():
     device = accelerator.device
 
     # Hyperparameters
-    batch_size = 8
+    batch_size = 128
     learning_rate = 1e-4
     num_epochs = 10
     seed = 42
@@ -57,7 +57,7 @@ def main():
     dataloader = DataLoader(
         dataset,
         batch_size=batch_size,
-        shuffle=True,
+        shuffle=False,
         num_workers=1, #os.cpu_count() // 2,  # Use half the available CPUs
         pin_memory=True,
     )
@@ -126,7 +126,7 @@ def main():
 
                 unwrapped_model = accelerator.unwrap_model(model)
                 generated_images = full_image_generation(
-                    unwrapped_model, x_context, device=accelerator.device
+                    unwrapped_model, batch, x_context, device=accelerator.device
                 )
 
                 # Select one channel and one batch item for visualization
