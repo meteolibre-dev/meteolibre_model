@@ -41,7 +41,7 @@ def main():
     LOG_EVERY_N_STEPS = 5
     batch_size = 128
     learning_rate = 1e-4
-    num_epochs = 10
+    num_epochs = 200
     seed = 42
     gradient_clip_value = 1.0  # Gradient clipping value
     id_run = str(random.randint(0, 1000))

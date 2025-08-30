@@ -266,9 +266,9 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
     with torch.no_grad():
         model.to(device)
         x_context = x_context.to(device)
-        x_context = x_context[[0]]  # batch of size 1 to reduce compute
+        x_context = x_context[[0], :, :, :, :]  # batch of size 1 to reduce compute
 
-        context_info = batch["spatial_position"].to(device)
+        context_info = batch["spatial_position"].to(device)[[0], :]
 
         batch_size, nb_channel, _, h, w = x_context.shape
         delta = 1e-8  # Small constant for numerical stability [cite: 472]
@@ -283,9 +283,8 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
             s_val = (i - 1) / steps
 
             # Create a tensor for the current timestep
-            t_batch = torch.full(
-                (batch_size,), t_val, device=device, dtype=torch.float32
-            )
+            t_batch = torch.full((batch_size,), t_val, device=device, dtype=torch.float32)
+
             s_batch = torch.full(
                 (batch_size,), s_val, device=device, dtype=torch.float32
             )
