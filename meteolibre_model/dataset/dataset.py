@@ -83,7 +83,7 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         return data_df
 
     def _preprocess(self, date, record: pd.Series) -> dict:
-        patch_data = np.frombuffer(record["data"], dtype=record["dtype"]).reshape(record["shape"])
+        patch_data = np.frombuffer(record["data"], dtype=record["dtype"]).reshape(record["shape"]).copy()
 
         # now we try to retrieve the longitude latitude of the patch to get the sun orientation on the patches
         long = record["x_coord"] # longitude

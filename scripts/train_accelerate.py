@@ -10,6 +10,7 @@ from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 from accelerate import Accelerator
 from accelerate.utils import set_seed, ProjectConfiguration, LoggerType
+from tqdm.auto import tqdm
 
 # Add project root to sys.path
 project_root = os.path.abspath("/workspace/meteolibre_model/")
@@ -81,7 +82,12 @@ def main():
         model.train()
         total_loss = 0.0
 
-        for idx, batch in enumerate(dataloader):
+        progress_bar = tqdm(
+            dataloader,
+            desc=f"Epoch {epoch+1}/{num_epochs}",
+            disable=not accelerator.is_main_process,
+        )
+        for idx, batch in enumerate(progress_bar):
 
             # Perform training step
             with accelerator.accumulate(model):
@@ -101,6 +107,7 @@ def main():
 
 
                 total_loss += loss.item()
+                progress_bar.set_postfix(loss=loss.item())
 
         # Calculate average loss for the epoch
         avg_loss = total_loss / len(dataloader)

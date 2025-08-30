@@ -4,37 +4,30 @@ In this module we will use helper to create a proper diffusion setupcre
 
 import torch
 
-
 import numpy as np
 import scipy.fft
 from PIL import Image
 
 
-# -- Parameters --
-IMG_SIZE = 128
-TIME_STEP = 0.2  # A single time t between 0.0 and 1.0
-BLUR_SIGMA_MAX = 0.05 # From Table 3, a high-performing value [cite: 306]
+from meteolibre_model.diffusion.utils import MEAN_CHANNEL, STD_CHANNEL
 
+# -- Parameters --
+BLUR_SIGMA_MAX = 0.05 
 
 # --- Step 1: Corrected schedule calculation ---
-
 def get_blurring_diffusion_schedules(
-    t: float, 
-    height: int, 
-    width: int, 
-    sigma_b_max: float, 
-    d_min: float = 0.001
+    t: float, height: int, width: int, sigma_b_max: float, d_min: float = 0.001
 ):
     """
     Computes the combined blurring and noise schedules for a given time t.
-    
+
     Args:
         t (float): Timestep between 0 and 1.
         height (int): Image height.
         width (int): Image width.
         sigma_b_max (float): Maximum blur sigma.
         d_min (float): Minimum damping factor for high frequencies.
-        
+
     Returns:
         tuple: A tuple containing:
             - alpha_t_vec (np.ndarray): The frequency-dependent signal scaling vector.
@@ -53,8 +46,8 @@ def get_blurring_diffusion_schedules(
     # 3. Calculate the frequency-dependent damping factor d_t
     if sigma_b_t > 0:
         # Dissipation time tau_t = sigma_B,t^2 / 2
-        dissipation_time = (sigma_b_t ** 2) / 2.0
-        
+        dissipation_time = (sigma_b_t**2) / 2.0
+
         # Calculate frequencies (lambda)
         # Note: The paper's appendix implies standard frequency calculation, not pi * freqs
         freqs_h = np.fft.fftfreq(height) * height
@@ -62,7 +55,7 @@ def get_blurring_diffusion_schedules(
         lambda_h = (2 * np.pi * freqs_h) ** 2
         lambda_w = (2 * np.pi * freqs_w) ** 2
         lambda_2d = lambda_h[:, np.newaxis] + lambda_w[np.newaxis, :]
-        
+
         # d_t = (1 - d_min) * exp(-lambda * tau_t) + d_min
         d_t_vec = (1 - d_min) * np.exp(-lambda_2d * dissipation_time) + d_min
     else:
@@ -71,33 +64,36 @@ def get_blurring_diffusion_schedules(
 
     # 4. Combine the schedules: alpha_t = a_t * d_t
     alpha_t_vec = a_t_scalar * d_t_vec
-    
+
     return alpha_t_vec.reshape(1, 1, height, width), sigma_t_scalar
 
+
 # --- Step 2: New function to add blurry noise at time t ---
+
 
 def add_blurry_noise(image: np.ndarray, t: float, sigma_b_max: float) -> np.ndarray:
     """
     Applies the blurring diffusion forward process to an image for a single timestep t.
     """
     h, w = image.shape[2], image.shape[3]
-    
+
     # Get the correct combined schedules for the given time t
     alpha_t, sigma_t = get_blurring_diffusion_schedules(t, h, w, sigma_b_max)
 
     # Transform image to frequency space using Discrete Cosine Transform (DCT)
     image_freq = scipy.fft.dctn(image, norm="ortho", axes=(-2, -1))
-    
+
     # Generate random noise in pixel space
     noise = np.random.randn(*image.shape)
 
     # Apply the forward process: z_t = V(alpha_t * u_x) + sigma_t * epsilon
     blurred_signal_freq = alpha_t * image_freq
     blurred_signal = scipy.fft.idctn(blurred_signal_freq, norm="ortho", axes=(-2, -1))
-    
+
     noisy_image = blurred_signal + sigma_t * noise
     return noisy_image
-    
+
+
 # --- Helper function to add standard isotropic noise (for comparison) ---
 
 
@@ -118,8 +114,16 @@ def trainer_step(model, batch, device):
     # The model expects (BATCH, NB_CHANNEL, NB_TEMPORAL, H, W), so permute dimensions
     batch_data = batch["patch_data"].permute(0, 2, 1, 3, 4)
 
+    # normalize using MEAN and STD
+    batch_data = (
+        batch_data - MEAN_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
+    ) / STD_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
+
+    # garde fou
+    batch_data = batch_data.clamp(-4, 4)
+
     x_context = batch_data[:, :, :4]  # Shape: (BATCH, NB_CHANNEL, 4, H, W)
-    x_target = batch_data[:, :, 4:]   # This is x_0, shape: (BATCH, NB_CHANNEL, 2, H, W)
+    x_target = batch_data[:, :, 4:]  # This is x_0, shape: (BATCH, NB_CHANNEL, 2, H, W)
 
     # 1. Generate random timesteps for the batch
     t_batch = torch.rand(batch_data.size(0), device=batch_data.device)
@@ -129,13 +133,13 @@ def trainer_step(model, batch, device):
 
     # 3. Create noisy target by applying blurring diffusion forward process
     x_t_batch = torch.zeros_like(x_target)
-    
+
     # Loop over the batch to create x_t for each sample
     # This is done one-by-one because get_blurring_diffusion_schedules is not vectorized
     for i in range(x_target.size(0)):
-        x_0_sample = x_target[i:i+1]
+        x_0_sample = x_target[i : i + 1]
         t_sample = t_batch[i].item()
-        noise_sample = noise[i:i+1]
+        noise_sample = noise[i : i + 1]
 
         h, w = x_0_sample.shape[-2], x_0_sample.shape[-1]
 
@@ -145,12 +149,16 @@ def trainer_step(model, batch, device):
         )
 
         # Convert numpy schedules to torch tensors
-        alpha_t_t = torch.from_numpy(alpha_t_vec).to(x_target.device, dtype=x_target.dtype)
-        sigma_t_t = torch.tensor(sigma_t_scalar, device=x_target.device, dtype=x_target.dtype)
+        alpha_t_t = torch.from_numpy(alpha_t_vec).to(
+            x_target.device, dtype=x_target.dtype
+        )
+        sigma_t_t = torch.tensor(
+            sigma_t_scalar, device=x_target.device, dtype=x_target.dtype
+        )
 
         # Move to numpy for DCT
         x_0_sample_np = x_0_sample.cpu().numpy()
-        
+
         # Apply DCT
         x_0_freq = scipy.fft.dctn(x_0_sample_np, norm="ortho", axes=(-2, -1))
 
@@ -158,9 +166,13 @@ def trainer_step(model, batch, device):
         blurred_signal_freq = alpha_t_t.cpu().numpy() * x_0_freq
 
         # Apply IDCT
-        blurred_signal_np = scipy.fft.idctn(blurred_signal_freq, norm="ortho", axes=(-2, -1))
-        
-        blurred_signal = torch.from_numpy(blurred_signal_np).to(x_target.device, dtype=x_target.dtype)
+        blurred_signal_np = scipy.fft.idctn(
+            blurred_signal_freq, norm="ortho", axes=(-2, -1)
+        )
+
+        blurred_signal = torch.from_numpy(blurred_signal_np).to(
+            x_target.device, dtype=x_target.dtype
+        )
 
         # Add noise in pixel space to create x_t
         x_t_sample = blurred_signal + sigma_t_t * noise_sample
@@ -204,9 +216,9 @@ def full_image_generation(model, x_context, steps=1000, device="cuda"):
     model.eval()
     model.to(device)
     x_context = x_context.to(device)
-    
+
     batch_size, nb_channel, _, h, w = x_context.shape
-    delta = 1e-8 # Small constant for numerical stability [cite: 472]
+    delta = 1e-8  # Small constant for numerical stability [cite: 472]
 
     # 1. Start with pure Gaussian noise (z_T) [cite: 204]
     z_t = torch.randn(batch_size, nb_channel, 2, h, w, device=device)
@@ -215,7 +227,7 @@ def full_image_generation(model, x_context, steps=1000, device="cuda"):
     for i in range(steps, 0, -1):
         t_val = i / steps
         s_val = (i - 1) / steps
-        
+
         # Create a tensor for the current timestep
         t_batch = torch.full((batch_size,), t_val, device=device, dtype=torch.float32)
 
@@ -223,7 +235,7 @@ def full_image_generation(model, x_context, steps=1000, device="cuda"):
         model_input = torch.cat([x_context, z_t], dim=2)
         with torch.no_grad():
             hat_eps_t = model(model_input, t_batch)
-        
+
         # --- Prepare for denoising calculation in frequency space ---
         # Convert current state and predicted noise to numpy for DCT
         z_t_np = z_t.cpu().numpy()
@@ -237,22 +249,23 @@ def full_image_generation(model, x_context, steps=1000, device="cuda"):
         # Get schedules for current (t) and previous (s) timesteps
         alpha_t, sigma_t = get_blurring_diffusion_schedules(t_val, h, w, BLUR_SIGMA_MAX)
         alpha_s, sigma_s = get_blurring_diffusion_schedules(s_val, h, w, BLUR_SIGMA_MAX)
-        
+
         # Calculate coefficients for the mean of the denoising distribution [cite: 216]
         alpha_ts = alpha_t / (alpha_s + delta)
         sigma2_ts = sigma_t**2 - alpha_ts**2 * sigma_s**2
-        
+
         # Calculate denoising variance (posterior variance) [cite: 179]
         sigma2_denoise = 1.0 / np.maximum(
-            (1.0 / np.maximum(sigma_s**2, delta)) + (alpha_ts**2 / np.maximum(sigma2_ts, delta)),
-            delta
+            (1.0 / np.maximum(sigma_s**2, delta))
+            + (alpha_ts**2 / np.maximum(sigma2_ts, delta)),
+            delta,
         )
-        
+
         # Calculate denoising mean (hat_mu) [cite: 216]
         # This is a direct implementation of Equation 23
         coeff1 = sigma2_denoise * alpha_ts / np.maximum(sigma2_ts, delta)
         coeff2 = sigma2_denoise / (alpha_s * np.maximum(sigma_s**2, delta))
-        
+
         term_in_eps = u_t - sigma_t * hat_u_eps_t
         hat_mu_t_s = coeff1 * u_t + coeff2 * term_in_eps
 
@@ -260,14 +273,14 @@ def full_image_generation(model, x_context, steps=1000, device="cuda"):
         if i > 1:
             # Generate random noise for the sampling step
             noise_z = np.random.randn(*z_t.shape)
-            u_noise = scipy.fft.dctn(noise_z, norm="ortho", axes=(-2,-1))
-            
+            u_noise = scipy.fft.dctn(noise_z, norm="ortho", axes=(-2, -1))
+
             # Sample u_s = mean + std * noise [cite: 207]
             u_s = hat_mu_t_s + np.sqrt(sigma2_denoise) * u_noise
         else:
             # The last step is deterministic
             u_s = hat_mu_t_s
-            
+
         # Convert back to pixel space and update z_t for the next iteration
         z_s_np = scipy.fft.idctn(u_s, norm="ortho", axes=(-2, -1))
         z_t = torch.from_numpy(z_s_np).to(device, dtype=torch.float32)
