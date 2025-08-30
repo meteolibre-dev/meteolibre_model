@@ -267,6 +267,7 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
 
         batch_size, nb_channel, _, h, w = x_context.shape
         delta = 1e-8  # Small constant for numerical stability [cite: 472]
+        delta_tensor = torch.tensor(delta, device=device)
 
         # 1. Start with pure Gaussian noise (z_T) [cite: 204]
         z_t = torch.randn(batch_size, nb_channel, 2, h, w, device=device)
@@ -280,47 +281,72 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
             t_batch = torch.full(
                 (batch_size,), t_val, device=device, dtype=torch.float32
             )
+            s_batch = torch.full(
+                (batch_size,), s_val, device=device, dtype=torch.float32
+            )
 
             context_global = torch.cat([context_info, t_batch.unsqueeze(1)], dim=1)
 
             # Get the model's noise prediction
             model_input = torch.cat([x_context, z_t], dim=2)
-            with torch.no_grad():
-                hat_eps_t = model(model_input.float(), context_global.float())
+            hat_eps_t = model(model_input.float(), context_global.float())
 
             # --- Prepare for denoising calculation in frequency space ---
-            # Convert current state and predicted noise to numpy for DCT
-            z_t_np = z_t.cpu().numpy()
-            hat_eps_t_np = hat_eps_t.cpu().numpy()
+            # Reshape for 2D DCT: (b, c, t, h, w) -> (b*t, c, h, w)
+            z_t_reshaped = einops.rearrange(z_t, "b c t h w -> (b t) c h w")
+            hat_eps_t_reshaped = einops.rearrange(
+                hat_eps_t, "b c t h w -> (b t) c h w"
+            )
 
             # Transform to frequency space u_t = V^T * z_t [cite: 205]
-            u_t = scipy.fft.dctn(z_t_np, norm="ortho", axes=(-2, -1))
-            hat_u_eps_t = scipy.fft.dctn(hat_eps_t_np, norm="ortho", axes=(-2, -1))
+            u_t_reshaped = dct.dct_2d(z_t_reshaped, norm="ortho")
+            hat_u_eps_t_reshaped = dct.dct_2d(hat_eps_t_reshaped, norm="ortho")
+
+            # Reshape back: (b*t, c, h, w) -> (b, c, t, h, w)
+            u_t = einops.rearrange(
+                u_t_reshaped, "(b t) c h w -> b c t h w", b=batch_size
+            )
+            hat_u_eps_t = einops.rearrange(
+                hat_u_eps_t_reshaped, "(b t) c h w -> b c t h w", b=batch_size
+            )
 
             # --- Calculate the parameters for the denoising distribution p(z_s | z_t) ---
             # Get schedules for current (t) and previous (s) timesteps
-            alpha_t, sigma_t = get_blurring_diffusion_schedules(
-                t_val, h, w, BLUR_SIGMA_MAX
+            alpha_t_vec, sigma_t_batch = get_blurring_diffusion_schedules_pt(
+                t_batch, h, w, BLUR_SIGMA_MAX
             )
-            alpha_s, sigma_s = get_blurring_diffusion_schedules(
-                s_val, h, w, BLUR_SIGMA_MAX
+            alpha_s_vec, sigma_s_batch = get_blurring_diffusion_schedules_pt(
+                s_batch, h, w, BLUR_SIGMA_MAX
             )
 
+            # Reshape for broadcasting with 5D tensors
+            # alpha_t_vec is (b, 1, h, w), needs to be (b, 1, 1, h, w)
+            alpha_t = alpha_t_vec.unsqueeze(2)
+            alpha_s = alpha_s_vec.unsqueeze(2)
+            # sigma_t_batch is (b,), needs to be (b, 1, 1, 1, 1)
+            sigma_t = sigma_t_batch.view(batch_size, 1, 1, 1, 1)
+            sigma_s = sigma_s_batch.view(batch_size, 1, 1, 1, 1)
+
             # Calculate coefficients for the mean of the denoising distribution [cite: 216]
-            alpha_ts = alpha_t / (alpha_s + delta)
+            alpha_ts = alpha_t / (alpha_s + delta_tensor)
             sigma2_ts = sigma_t**2 - alpha_ts**2 * sigma_s**2
 
             # Calculate denoising variance (posterior variance) [cite: 179]
-            sigma2_denoise = 1.0 / np.maximum(
-                (1.0 / np.maximum(sigma_s**2, delta))
-                + (alpha_ts**2 / np.maximum(sigma2_ts, delta)),
-                delta,
+            sigma2_denoise = 1.0 / torch.maximum(
+                (1.0 / torch.maximum(sigma_s**2, delta_tensor))
+                + (alpha_ts**2 / torch.maximum(sigma2_ts, delta_tensor)),
+                delta_tensor,
             )
 
             # Calculate denoising mean (hat_mu) [cite: 216]
             # This is a direct implementation of Equation 23
-            coeff1 = sigma2_denoise * alpha_ts / np.maximum(sigma2_ts, delta)
-            coeff2 = sigma2_denoise / (alpha_s * np.maximum(sigma_s**2, delta))
+            coeff1 = (
+                sigma2_denoise * alpha_ts / torch.maximum(sigma2_ts, delta_tensor)
+            )
+            coeff2 = (
+                sigma2_denoise
+                / (alpha_s * torch.maximum(sigma_s**2, delta_tensor))
+            )
 
             term_in_eps = u_t - sigma_t * hat_u_eps_t
             hat_mu_t_s = coeff1 * u_t + coeff2 * term_in_eps
@@ -328,18 +354,27 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
             # --- Sample z_s from the denoising distribution ---
             if i > 1:
                 # Generate random noise for the sampling step
-                noise_z = np.random.randn(*z_t.shape)
-                u_noise = scipy.fft.dctn(noise_z, norm="ortho", axes=(-2, -1))
+                noise_z = torch.randn_like(z_t)
+                noise_z_reshaped = einops.rearrange(
+                    noise_z, "b c t h w -> (b t) c h w"
+                )
+                u_noise_reshaped = dct.dct_2d(noise_z_reshaped, norm="ortho")
+                u_noise = einops.rearrange(
+                    u_noise_reshaped, "(b t) c h w -> b c t h w", b=batch_size
+                )
 
                 # Sample u_s = mean + std * noise [cite: 207]
-                u_s = hat_mu_t_s + np.sqrt(sigma2_denoise) * u_noise
+                u_s = hat_mu_t_s + torch.sqrt(sigma2_denoise) * u_noise
             else:
                 # The last step is deterministic
                 u_s = hat_mu_t_s
 
             # Convert back to pixel space and update z_t for the next iteration
-            z_s_np = scipy.fft.idctn(u_s, norm="ortho", axes=(-2, -1))
-            z_t = torch.from_numpy(z_s_np).to(device, dtype=torch.float32)
+            u_s_reshaped = einops.rearrange(u_s, "b c t h w -> (b t) c h w")
+            z_s_reshaped = dct.idct_2d(u_s_reshaped, norm="ortho")
+            z_t = einops.rearrange(
+                z_s_reshaped, "(b t) c h w -> b c t h w", b=batch_size
+            )
 
     # Set model back to training mode
     model.train()
