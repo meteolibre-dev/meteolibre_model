@@ -148,12 +148,12 @@ def main():
                 generated_sample = generated_images[0, 0]  # Shape: (2, H, W)
                 target_sample = x_target[0, 0].cpu()  # Shape: (2, H, W)
 
-                all_frames = torch.cat([generated_sample, target_sample], dim=0)
+                all_frames = torch.cat([generated_sample, target_sample], dim=0) / 8
                 grid = make_grid(all_frames.unsqueeze(1), nrow=2)
 
                 tb_tracker = accelerator.get_tracker("tensorboard")
                 if tb_tracker:
-                    tb_tracker.add_image("Generated vs Target", grid, epoch)
+                    tb_tracker.writer.add_image("Generated vs Target", grid, epoch)
 
     # Save the model
     accelerator.wait_for_everyone()
