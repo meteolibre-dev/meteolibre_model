@@ -11,6 +11,9 @@ from torchvision.utils import make_grid
 from accelerate import Accelerator
 from accelerate.utils import set_seed, ProjectConfiguration, LoggerType
 from tqdm.auto import tqdm
+import random
+
+from accelerate.utils import DistributedDataParallelKwargs
 
 # Add project root to sys.path
 project_root = os.path.abspath("/workspace/meteolibre_model/")
@@ -24,27 +27,33 @@ from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
 
 def main():
     # Initialize Accelerator with bfloat16 precision and logging
-    project_config = ProjectConfiguration(
-        project_dir="runs/meteolibre_experiment",
-        logging_dir="runs/meteolibre_experiment/logs",
-    )
+    kwargs = DistributedDataParallelKwargs(find_unused_parameters=True)
 
     accelerator = Accelerator(
         mixed_precision="bf16",
-        log_with=LoggerType.TENSORBOARD,
-        project_config=project_config,
+        log_with="tensorboard",
+        project_dir=".",
+        kwargs_handlers=[kwargs],
     )
     device = accelerator.device
 
     # Hyperparameters
+    LOG_EVERY_N_STEPS = 5
     batch_size = 128
     learning_rate = 1e-4
     num_epochs = 10
     seed = 42
     gradient_clip_value = 1.0  # Gradient clipping value
-
+    id_run = str(random.randint(0, 1000))
     # Set seed for reproducibility
     set_seed(seed)
+
+
+    hps = {"batch_size": batch_size, "learning_rate": learning_rate}
+
+    accelerator.init_trackers(
+        "meteofrance-eps-prediction-training_" + id_run, config=hps
+    )
 
     # Initialize dataset
     dataset = MeteoLibreMapDataset(
@@ -77,6 +86,8 @@ def main():
     # Prepare for distributed training
     model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
 
+    global_step = 0
+
     # Training loop
     for epoch in range(num_epochs):
         model.train()
@@ -87,7 +98,7 @@ def main():
             desc=f"Epoch {epoch+1}/{num_epochs}",
             disable=not accelerator.is_main_process,
         )
-        for idx, batch in enumerate(progress_bar):
+        for batch in progress_bar:
 
             # Perform training step
             with accelerator.accumulate(model):
@@ -100,10 +111,14 @@ def main():
                 optimizer.step()
                 optimizer.zero_grad()
 
-                accelerator.log(
-                    {"Loss/train_trained": loss.item()},
-                    step=epoch * len(dataloader) + idx,
-                )
+                global_step += 1
+
+                if global_step % LOG_EVERY_N_STEPS == 0:
+                    if accelerator.is_main_process:
+                        accelerator.log(
+                            {"Loss/train_trained": loss.item()},
+                            step=global_step,
+                        )
 
 
                 total_loss += loss.item()

@@ -158,9 +158,9 @@ def apply_blur_diffusion(
 
     blurred_image = dct.idct_2d(blurred_image_freq)
 
-    return blurred_image.detach() + noise * sigma_t_batch.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).detach()
-
-# --- Helper function to add standard isotropic noise (for comparison) ---
+    return blurred_image.detach() + noise * sigma_t_batch.unsqueeze(-1).unsqueeze(
+        -1
+    ).unsqueeze(-1).detach(), noise
 
 
 def trainer_step(model, batch, device):
@@ -193,7 +193,11 @@ def trainer_step(model, batch, device):
                 .unsqueeze(-1)
                 .to(device)
             )
-            / STD_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
+            / STD_CHANNEL.unsqueeze(0)
+            .unsqueeze(-1)
+            .unsqueeze(-1)
+            .unsqueeze(-1)
+            .to(device)
             * 4.0
         )
 
@@ -201,13 +205,12 @@ def trainer_step(model, batch, device):
         batch_data = batch_data.clamp(-8, 8)
 
         x_context = batch_data[:, :, :4]  # Shape: (BATCH, NB_CHANNEL, 4, H, W)
-        x_target = batch_data[:, :, 4:]  # This is x_0, shape: (BATCH, NB_CHANNEL, 2, H, W)
+        x_target = batch_data[
+            :, :, 4:
+        ]  # This is x_0, shape: (BATCH, NB_CHANNEL, 2, H, W)
 
         # 1. Generate random timesteps for the batch
         t_batch = torch.rand(batch_data.size(0), device=batch_data.device)
-
-        # 2. Generate noise
-        noise = torch.randn_like(x_target)
 
         # 3. Create noisy target by applying blurring diffusion forward process
         # quick permutation to manage the 4D constraint
@@ -217,10 +220,12 @@ def trainer_step(model, batch, device):
         t_blur = t_batch.unsqueeze(1).repeat(1, t_subset)
         t_blur = einops.rearrange(t_blur, "b t-> (b t)")
 
-        x_t_batch = apply_blur_diffusion(x_target, t_blur).detach()
+        x_t_batch, noise = apply_blur_diffusion(x_target, t_blur)
 
-        x_t_batch = einops.rearrange(x_t_batch, "(b t) c h w -> b c t h w", b=b, t=t_subset)
-
+        x_t_batch = einops.rearrange(
+            x_t_batch, "(b t) c h w -> b c t h w", b=b, t=t_subset
+        ).detach()
+        noise = einops.rearrange(noise, "(b t) c h w -> b c t h w", b=b, t=t_subset)
 
     # 4. Get model prediction
     # The model input is the concatenation of the context and the noisy target.
@@ -294,9 +299,7 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
             # --- Prepare for denoising calculation in frequency space ---
             # Reshape for 2D DCT: (b, c, t, h, w) -> (b*t, c, h, w)
             z_t_reshaped = einops.rearrange(z_t, "b c t h w -> (b t) c h w")
-            hat_eps_t_reshaped = einops.rearrange(
-                hat_eps_t, "b c t h w -> (b t) c h w"
-            )
+            hat_eps_t_reshaped = einops.rearrange(hat_eps_t, "b c t h w -> (b t) c h w")
 
             # Transform to frequency space u_t = V^T * z_t [cite: 205]
             u_t_reshaped = dct.dct_2d(z_t_reshaped, norm="ortho")
@@ -340,12 +343,9 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
 
             # Calculate denoising mean (hat_mu) [cite: 216]
             # This is a direct implementation of Equation 23
-            coeff1 = (
-                sigma2_denoise * alpha_ts / torch.maximum(sigma2_ts, delta_tensor)
-            )
-            coeff2 = (
-                sigma2_denoise
-                / (alpha_s * torch.maximum(sigma_s**2, delta_tensor))
+            coeff1 = sigma2_denoise * alpha_ts / torch.maximum(sigma2_ts, delta_tensor)
+            coeff2 = sigma2_denoise / (
+                alpha_s * torch.maximum(sigma_s**2, delta_tensor)
             )
 
             term_in_eps = u_t - sigma_t * hat_u_eps_t
@@ -355,9 +355,7 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
             if i > 1:
                 # Generate random noise for the sampling step
                 noise_z = torch.randn_like(z_t)
-                noise_z_reshaped = einops.rearrange(
-                    noise_z, "b c t h w -> (b t) c h w"
-                )
+                noise_z_reshaped = einops.rearrange(noise_z, "b c t h w -> (b t) c h w")
                 u_noise_reshaped = dct.dct_2d(noise_z_reshaped, norm="ortho")
                 u_noise = einops.rearrange(
                     u_noise_reshaped, "(b t) c h w -> b c t h w", b=batch_size
