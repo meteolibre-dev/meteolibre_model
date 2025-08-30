@@ -162,6 +162,29 @@ def apply_blur_diffusion(
         -1
     ).unsqueeze(-1).detach(), noise
 
+def normalize(batch_data, device):
+    batch_data =  (
+            (
+                batch_data
+                - MEAN_CHANNEL.unsqueeze(0)
+                .unsqueeze(-1)
+                .unsqueeze(-1)
+                .unsqueeze(-1)
+                .to(device)
+            )
+            / STD_CHANNEL.unsqueeze(0)
+            .unsqueeze(-1)
+            .unsqueeze(-1)
+            .unsqueeze(-1)
+            .to(device)
+            * 4.0
+        )
+
+    # garde fou
+    batch_data = batch_data.clamp(-8, 8)
+
+    return batch_data
+
 
 def trainer_step(model, batch, device):
     """
@@ -184,25 +207,7 @@ def trainer_step(model, batch, device):
         b, c, t, h, w = batch_data.shape
 
         # normalize using MEAN and STD
-        batch_data = (
-            (
-                batch_data
-                - MEAN_CHANNEL.unsqueeze(0)
-                .unsqueeze(-1)
-                .unsqueeze(-1)
-                .unsqueeze(-1)
-                .to(device)
-            )
-            / STD_CHANNEL.unsqueeze(0)
-            .unsqueeze(-1)
-            .unsqueeze(-1)
-            .unsqueeze(-1)
-            .to(device)
-            * 4.0
-        )
-
-        # garde fou
-        batch_data = batch_data.clamp(-8, 8)
+        batch_data = normalize(batch_data, device)
 
         x_context = batch_data[:, :, :4]  # Shape: (BATCH, NB_CHANNEL, 4, H, W)
         x_target = batch_data[
@@ -268,6 +273,8 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
         x_context = x_context.to(device)
         x_context = x_context[[0], :, :, :, :]  # batch of size 1 to reduce compute
 
+        x_context = normalize(x_context, device)
+
         context_info = batch["spatial_position"].to(device)[[0], :]
 
         batch_size, nb_channel, _, h, w = x_context.shape
@@ -330,13 +337,13 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
             sigma_s = sigma_s_batch.view(batch_size, 1, 1, 1, 1)
 
             # Calculate coefficients for the mean of the denoising distribution [cite: 216]
-            alpha_ts = alpha_t / (alpha_s + delta_tensor)
+            alpha_ts = torch.maximum(alpha_t / (alpha_s + delta_tensor), torch.tensor(1e-2, device=device))
             sigma2_ts = sigma_t**2 - alpha_ts**2 * sigma_s**2
 
             # Calculate denoising variance (posterior variance) [cite: 179]
             sigma2_denoise = 1.0 / torch.maximum(
                 (1.0 / torch.maximum(sigma_s**2, delta_tensor))
-                + (alpha_ts**2 / torch.maximum(sigma2_ts, delta_tensor)),
+                + (1.0 /torch.maximum(sigma2_ts**2 / alpha_ts**2, delta_tensor)),
                 delta_tensor,
             )
 
@@ -344,11 +351,11 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
             # This is a direct implementation of Equation 23
             coeff1 = sigma2_denoise * alpha_ts / torch.maximum(sigma2_ts, delta_tensor)
             coeff2 = sigma2_denoise / (
-                alpha_s * torch.maximum(sigma_s**2, delta_tensor)
+                alpha_ts * torch.maximum(sigma_s**2, delta_tensor)
             )
 
             term_in_eps = u_t - sigma_t * hat_u_eps_t
-            hat_mu_t_s = coeff1 * u_t + coeff2 * term_in_eps
+            hat_mu_t_s = coeff1 * u_t + coeff2 * term_in_eps # coeff 2 is bad here
 
             # --- Sample z_s from the denoising distribution ---
             if i > 1:
