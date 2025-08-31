@@ -38,10 +38,19 @@ def normalize(batch_data, device):
 
 def get_x_t(x0, x1, t):
     """
-    Get the interpolated point x_t = (1 - t^{1/4}) * x0 + t^{1/4} * x1
+    Get the interpolated point x_t = (1 - s(t)) * x0 + s(t) * x1 where s(t) = sin(PI/2 * sqrt(t))^2
     """
-    t_p = t ** (1/4)
-    return (1 - t_p) * x0 + t_p * x1
+    theta = torch.pi / 2 * torch.sqrt(t)
+    s_t = torch.sin(theta) ** 2
+    return (1 - s_t) * x0 + s_t * x1
+
+def ds_dt(t):
+    t_clamped = torch.clamp(t, min=1e-6)
+    sqrt_t = torch.sqrt(t_clamped)
+    theta = torch.pi / 2 * sqrt_t
+    sin_theta = torch.sin(theta)
+    cos_theta = torch.cos(theta)
+    return (torch.pi / 2) * sin_theta * cos_theta / sqrt_t
 
 def trainer_step(model, batch, device):
     """
@@ -81,10 +90,9 @@ def trainer_step(model, batch, device):
         # Get x_t
         x_t = get_x_t(x_target, x1, t_expanded)
 
-        # True velocity v = (1/4) * t^{-3/4} * (x1 - x0)
+        # True velocity v = ds/dt * (x1 - x0)
         t_expanded_full = t_batch.view(b, 1, 1, 1, 1).expand(b, c, 2, h, w)
-        t_clamped = torch.clamp(t_expanded_full, min=1e-6)
-        true_v = (1/4) * (t_clamped ** (-3/4)) * (x1 - x_target)
+        true_v = ds_dt(t_expanded_full) * (x1 - x_target)
 
     # Model input: concatenate context and x_t
     model_input = torch.cat([x_context, x_t], dim=2)  # (B, C, 6, H, W)

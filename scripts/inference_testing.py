@@ -79,7 +79,7 @@ def main():
     )
 
     # weight from previous run
-    file_path = "/workspace/meteolibre_model/models/epoch_6.safetensors"
+    file_path = "/workspace/meteolibre_model/models/epoch_11.safetensors"
     loaded = load_file(file_path)
     model.load_state_dict(loaded)
 
