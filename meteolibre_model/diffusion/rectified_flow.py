@@ -52,7 +52,7 @@ def ds_dt(t):
     cos_theta = torch.cos(theta)
     return (torch.pi / 2) * sin_theta * cos_theta / sqrt_t
 
-def trainer_step(model, batch, device):
+def trainer_step(model, batch, device, parametrization="standard"):
     """
     Performs a single training step for the rectified flow model.
 
@@ -60,6 +60,7 @@ def trainer_step(model, batch, device):
         model: The neural network model.
         batch: Batch data from the dataset.
         device: Device to run on.
+        parametrization: Type of parametrization ("standard" or "residual").
 
     Returns:
         The loss value for the training step.
@@ -75,6 +76,9 @@ def trainer_step(model, batch, device):
 
         x_context = batch_data[:, :, :4]  # Context frames
         x_target = batch_data[:, :, 4:]  # Target frames (x0)
+
+        if parametrization == "residual":
+            x_target = batch_data[:, :, 4:] - batch_data[:, :, 3:4]
 
         mask_data = x_target != CLIP_MIN
 
@@ -108,7 +112,7 @@ def trainer_step(model, batch, device):
 
     return loss
 
-def full_image_generation(model, batch, x_context, steps=100, device="cuda"):
+def full_image_generation(model, batch, x_context, steps=100, device="cuda", parametrization="standard"):
     """
     Generates full images using rectified flow ODE solver.
 
@@ -118,6 +122,7 @@ def full_image_generation(model, batch, x_context, steps=100, device="cuda"):
         x_context: Context frames.
         steps: Number of ODE steps.
         device: Device to run on.
+        parametrization: Type of parametrization ("standard" or "residual").
 
     Returns:
         Generated images.
@@ -162,6 +167,10 @@ def full_image_generation(model, batch, x_context, steps=100, device="cuda"):
 
             # Clamp to prevent divergence
             x_t = x_t.clamp(-7, 7)
+
+    if parametrization == "residual":
+        last_context = x_context[:, :, 3:4]  # (batch_size, nb_channel, 1, h, w)
+        x_t = x_t + last_context.expand(-1, -1, 2, -1, -1)
 
     model.train()
     return x_t.cpu()

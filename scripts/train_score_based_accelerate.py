@@ -1,6 +1,6 @@
 """
-Training script for MeteoLibre using Hugging Face Accelerate with Rectified Flow.
-This script trains a rectified flow model using the MeteoLibreMapDataset and UNet_DCAE_3D.
+Training script for MeteoLibre using Hugging Face Accelerate with Score-Based Generative Model.
+This script trains a score-based model using the MeteoLibreMapDataset and UNet_DCAE_3D.
 """
 
 import sys
@@ -23,7 +23,7 @@ sys.path.insert(0, project_root)
 
 
 from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
-from meteolibre_model.diffusion.rectified_flow import (
+from meteolibre_model.diffusion.score_based import (
     trainer_step,
     full_image_generation,
     normalize,
@@ -60,7 +60,7 @@ def main():
     hps = {"batch_size": batch_size, "learning_rate": learning_rate}
 
     accelerator.init_trackers(
-        "meteofrance-eps-prediction-training-rectified-flow_" + id_run, config=hps
+        "meteofrance-eps-prediction-training-score-based_" + id_run, config=hps
     )
 
     # Initialize dataset
@@ -178,7 +178,7 @@ def main():
             if accelerator.is_main_process:
                 unwrapped_model = accelerator.unwrap_model(model)
                 # Save the EMA model's state dictionary
-                save_path = f"{MODEL_DIR}epoch_{epoch + 1}_rectified_flow.safetensors"
+                save_path = f"{MODEL_DIR}epoch_{epoch + 1}_score_based.safetensors"
                 os.makedirs(MODEL_DIR, exist_ok=True)
                 save_file(unwrapped_model.state_dict(), save_path)
                 accelerator.print(f"Model saved to {save_path}")
@@ -188,8 +188,8 @@ def main():
     # Save the model
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        torch.save(model.state_dict(), "meteolibre_model_rectified_flow.pth")
-        print("Training complete. Model saved to meteolibre_model_rectified_flow.pth")
+        torch.save(model.state_dict(), "meteolibre_model_score_based.pth")
+        print("Training complete. Model saved to meteolibre_model_score_based.pth")
 
 
 if __name__ == "__main__":
