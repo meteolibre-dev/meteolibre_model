@@ -15,6 +15,7 @@ from tqdm.auto import tqdm
 import random
 
 from accelerate.utils import DistributedDataParallelKwargs
+from safetensors.torch import save_file, load_file
 
 # Add project root to sys.path
 project_root = os.path.abspath("/workspace/meteolibre_model/")
@@ -25,6 +26,7 @@ from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
 from meteolibre_model.diffusion.blurring_diffusion import (
     trainer_step,
     full_image_generation,
+    normalize,
 )
 from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
 
@@ -43,6 +45,8 @@ def main():
 
     # Hyperparameters
     LOG_EVERY_N_STEPS = 5
+    SAVE_EVERY_N_EPOCHS = 5
+    MODEL_DIR = "models/"
     batch_size = 128
     learning_rate = 1e-4
     num_epochs = 200
@@ -70,7 +74,7 @@ def main():
         dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=1,  # os.cpu_count() // 2,  # Use half the available CPUs
+        num_workers=4,  # os.cpu_count() // 2,  # Use half the available CPUs
         pin_memory=True,
     )
 
@@ -124,8 +128,6 @@ def main():
 
                 total_loss += loss.item()
                 progress_bar.set_postfix(loss=loss.item())
-            
-            break
 
         # Calculate average loss for the epoch
         avg_loss = total_loss / len(dataloader)
@@ -142,6 +144,8 @@ def main():
                 x_context = permuted_batch_data[:, :, :4]
                 x_target = permuted_batch_data[:, :, 4:]
 
+                x_target = normalize(x_target, device)
+
                 unwrapped_model = accelerator.unwrap_model(model)
                 generated_images = full_image_generation(
                     unwrapped_model, batch, x_context, device=accelerator.device
@@ -152,6 +156,7 @@ def main():
                 target_sample = x_target[0, 0].cpu()  # Shape: (2, H, W)
 
                 all_frames = torch.cat([generated_sample, target_sample], dim=0) / 8.
+                all_frames = all_frames.clamp(-10, 10)
 
                 grid = make_grid(all_frames.unsqueeze(1), nrow=2)
                 grid_normalized = make_grid(
@@ -164,6 +169,20 @@ def main():
                 if tb_tracker:
                     tb_tracker.writer.add_image("Generated vs Target", grid, epoch)
                     tb_tracker.writer.add_image("Generated vs Target (normalized)", grid_normalized, epoch)
+
+
+        # This part for saving the model was already correct
+        if (epoch) % SAVE_EVERY_N_EPOCHS == 0:
+            accelerator.wait_for_everyone()
+            if accelerator.is_main_process:
+                unwrapped_model = accelerator.unwrap_model(model)
+                # Save the EMA model's state dictionary
+                save_path = f"{MODEL_DIR}epoch_{epoch + 1}.safetensors"
+                os.makedirs(MODEL_DIR, exist_ok=True)
+                save_file(unwrapped_model.state_dict(), save_path)
+                accelerator.print(f"Model saved to {save_path}")
+
+        accelerator.wait_for_everyone()
 
     # Save the model
     accelerator.wait_for_everyone()

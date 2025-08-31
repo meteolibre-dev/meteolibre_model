@@ -25,6 +25,7 @@ import torch_dct as dct
 BLUR_SIGMA_MAX = 1.0
 D_MIN = 0.001
 
+CLIP_MIN = -4
 
 def get_blurring_diffusion_schedules_pt(
     t_batch: torch.Tensor,
@@ -143,7 +144,7 @@ def apply_blur_diffusion(
 
     # --- 3. Transform to Frequency Domain ---
     # torch.fft.rfft2 is efficient for real-valued inputs like images.
-    image_freq = dct.dct_2d(image_batch)
+    image_freq = dct.dct_2d(image_batch, norm='ortho')
 
     # --- 4. Apply Blurring in Frequency Domain ---
     # The output of rfft2 has a different size on the last dimension (w // 2 + 1).
@@ -156,7 +157,7 @@ def apply_blur_diffusion(
     # We provide the original dimensions `s=(h, w)` to ensure the output is correctly sized.
     noise = torch.randn_like(image_batch)
 
-    blurred_image = dct.idct_2d(blurred_image_freq)
+    blurred_image = dct.idct_2d(blurred_image_freq, norm='ortho')
 
     return blurred_image.detach() + noise * sigma_t_batch.unsqueeze(-1).unsqueeze(
         -1
@@ -177,11 +178,10 @@ def normalize(batch_data, device):
             .unsqueeze(-1)
             .unsqueeze(-1)
             .to(device)
-            * 4.0
         )
 
     # garde fou
-    batch_data = batch_data.clamp(-8, 8)
+    batch_data = batch_data.clamp(CLIP_MIN, 4)
 
     return batch_data
 
@@ -209,10 +209,14 @@ def trainer_step(model, batch, device):
         # normalize using MEAN and STD
         batch_data = normalize(batch_data, device)
 
+
         x_context = batch_data[:, :, :4]  # Shape: (BATCH, NB_CHANNEL, 4, H, W)
         x_target = batch_data[
             :, :, 4:
         ]  # This is x_0, shape: (BATCH, NB_CHANNEL, 2, H, W)
+
+
+        mask_data = x_target != CLIP_MIN
 
         # 1. Generate random timesteps for the batch
         t_batch = torch.rand(batch_data.size(0), device=batch_data.device)
@@ -245,7 +249,7 @@ def trainer_step(model, batch, device):
     predicted_noise = model(model_input.float(), context_global.float())
 
     # 5. Apply loss function (MSE between actual and predicted noise)
-    loss = torch.nn.functional.mse_loss(predicted_noise, noise.float())
+    loss = torch.nn.functional.mse_loss(predicted_noise[mask_data], noise.float()[mask_data])
 
     return loss
 
@@ -285,7 +289,7 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
         z_t = torch.randn(batch_size, nb_channel, 2, h, w, device=device)
 
         # 2. Loop from T to 1 [cite: 205]
-        for i in range(steps, 0, -1):
+        for i in range(steps - 1, 0, -1):
             t_val = i / steps
             s_val = (i - 1) / steps
 
@@ -343,7 +347,7 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
             # Calculate denoising variance (posterior variance) [cite: 179]
             sigma2_denoise = 1.0 / torch.maximum(
                 (1.0 / torch.maximum(sigma_s**2, delta_tensor))
-                + (1.0 /torch.maximum(sigma2_ts**2 / alpha_ts**2, delta_tensor)),
+                + (alpha_ts**2 / torch.maximum(sigma2_ts, delta_tensor)),
                 delta_tensor,
             )
 
@@ -379,6 +383,8 @@ def full_image_generation(model, batch, x_context, steps=1000, device="cuda"):
             z_t = einops.rearrange(
                 z_s_reshaped, "(b t) c h w -> b c t h w", b=batch_size
             )
+
+            z_t = z_t.clamp(-7, 7)
 
     # Set model back to training mode
     model.train()
