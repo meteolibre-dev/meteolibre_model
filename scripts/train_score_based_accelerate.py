@@ -24,7 +24,7 @@ sys.path.insert(0, project_root)
 
 from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
 from meteolibre_model.diffusion.score_based import (
-    trainer_step,
+    trainer_step_edm_loss,
     full_image_generation,
     normalize,
 )
@@ -83,9 +83,11 @@ def main():
     model = UNet_DCAE_3D(
         in_channels=12,  # Adjust based on your data
         out_channels=12,  # Adjust based on your data
-        features=[32, 64, 128, 256],
+        features=[64, 128, 256],
         context_dim=4,
+        embedding_dim=128,
         context_frames=4,
+        num_additional_resnet_blocks=1
     )
 
     # Initialize optimizer
@@ -109,7 +111,7 @@ def main():
         for batch in progress_bar:
             # Perform training step
             with accelerator.accumulate(model):
-                loss = trainer_step(model, batch, device, PARAMETRIZATION)
+                loss = trainer_step_edm_loss(model, batch, device, PARAMETRIZATION)
                 accelerator.backward(loss)
 
                 # Gradient clipping

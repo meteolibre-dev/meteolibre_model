@@ -17,17 +17,25 @@ class SinusoidalPosEmb(nn.Module):
     def forward(self, x):
         device = x.device
         half_dim = self.dim // 2
-        emb = math.log(10000) / (half_dim - 1)
-        emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
-        emb = x[:, None] * emb[None, :]
-        emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
-        return emb
+        if half_dim == 0:
+            # For dim=1, use sin
+            return torch.sin(x).unsqueeze(-1)
+        elif half_dim == 1:
+            # For dim=2, use sin and cos with scale 1
+            emb = x[:, None] * 1.0
+            return torch.cat((emb.sin(), emb.cos()), dim=-1)
+        else:
+            emb = math.log(10000) / (half_dim - 1)
+            emb = torch.exp(torch.arange(half_dim, device=device) * -emb)
+            emb = x[:, None] * emb[None, :]
+            emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
+            return emb
 
 
 class FilmLayer(nn.Module):
-    def __init__(self, context_dim, num_channels):
+    def __init__(self, embedding_dim, num_channels):
         super().__init__()
-        self.mlp = nn.Sequential(nn.Linear(context_dim, num_channels * 2), nn.ReLU())
+        self.mlp = nn.Sequential(nn.Linear(embedding_dim, num_channels * 2), nn.ReLU())
 
     def forward(self, x, context):
         mlp_out = self.mlp(context)
@@ -142,7 +150,7 @@ class ResNetBlock3D(nn.Module):
     """
 
     def __init__(
-        self, in_channels: int, out_channels: int, context_dim: int, context_frames: int
+        self, in_channels: int, out_channels: int, embedding_dim: int, context_frames: int
     ):
         super().__init__()
         self.context_frames = context_frames
@@ -165,7 +173,7 @@ class ResNetBlock3D(nn.Module):
         )
         self.bn2 = nn.InstanceNorm3d(out_channels, affine=True)
 
-        self.film = FilmLayer(context_dim, out_channels)
+        self.film = FilmLayer(embedding_dim, out_channels)
 
         self.shortcut = nn.Sequential()
         if in_channels != out_channels:
@@ -202,20 +210,26 @@ class UNet_DCAE_3D(nn.Module):
         in_channels: int = 1,
         out_channels: int = 1,
         features: List[int] = [32, 64, 128, 256],
-        context_dim: int = 128,
+        context_dim: int = 4,
+        embedding_dim: int = 128,
         context_frames: int = 4,
         num_additional_resnet_blocks: int = 0,
+        time_emb_dim: int = 64,
     ):
         super().__init__()
         self.features = features
         self.context_dim = context_dim
+        self.embedding_dim = embedding_dim
         self.context_frames = context_frames
         self.num_additional_resnet_blocks = num_additional_resnet_blocks
+        self.time_emb_dim = time_emb_dim
 
         # --- Time Embedding ---
+        time_mlp_input_dim = context_dim - 1 + self.time_emb_dim
         self.time_mlp = nn.Sequential(
-            nn.Linear(context_dim, 128), nn.ReLU(), nn.Linear(128, context_dim)
+            nn.Linear(time_mlp_input_dim, 128), nn.ReLU(), nn.Linear(128, embedding_dim)
         )
+        self.time_emb = SinusoidalPosEmb(dim=self.time_emb_dim)
 
         self.encoder_convs = nn.ModuleList()
         self.decoder_convs = nn.ModuleList()
@@ -227,7 +241,7 @@ class UNet_DCAE_3D(nn.Module):
         for feature in features:
             self.encoder_convs.append(
                 ResNetBlock3D(
-                    current_channels, feature, context_dim, self.context_frames
+                    current_channels, feature, embedding_dim, self.context_frames
                 )
             )
             self.downs.append(DCAE_DownsampleBlock3D(feature, feature * 2))
@@ -236,14 +250,14 @@ class UNet_DCAE_3D(nn.Module):
         # --- Bottleneck ---
         bottleneck_channels = features[-1] * 2
         self.bottleneck = ResNetBlock3D(
-            bottleneck_channels, bottleneck_channels, context_dim, self.context_frames
+            bottleneck_channels, bottleneck_channels, embedding_dim, self.context_frames
         )
 
         # --- Decoder (Upsampling Path) ---
         for feature in reversed(features):
             self.ups.append(DCAE_UpsampleBlock3D(feature * 2, feature))
             self.decoder_convs.append(
-                ResNetBlock3D(feature * 2, feature, context_dim, self.context_frames)
+                ResNetBlock3D(feature * 2, feature, embedding_dim, self.context_frames)
             )
 
         self.additional_resnet_blocks = nn.ModuleList()
@@ -251,7 +265,7 @@ class UNet_DCAE_3D(nn.Module):
             blocks = nn.ModuleList()
             for _ in range(self.num_additional_resnet_blocks):
                 blocks.append(
-                    ResNetBlock3D(feature, feature, context_dim, self.context_frames)
+                    ResNetBlock3D(feature, feature, embedding_dim, self.context_frames)
                 )
             self.additional_resnet_blocks.append(blocks)
 
@@ -264,17 +278,17 @@ class UNet_DCAE_3D(nn.Module):
         )
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
-        context = self.time_mlp(t)
+        time_val = t[:, -1]
+        emb = self.time_emb(time_val)
+        spatial = t[:, :-1]
+        combined = torch.cat([spatial, emb], dim=1)
+        context = self.time_mlp(combined)
         skip_connections = []
 
         # --- Encoder Path ---
         for i in range(len(self.features)):
 
-            
-
             x = self.encoder_convs[i](x, context)
-
-
             skip_connections.append(x)
             x = self.downs[i](x)
 
@@ -319,7 +333,7 @@ if __name__ == "__main__":
     input_tensor = torch.randn(
         BATCH_SIZE, IN_CHANNELS, IMG_DEPTH, IMG_HEIGHT, IMG_WIDTH
     )
-    t = torch.rand(BATCH_SIZE)
+    t = torch.rand(BATCH_SIZE, CONTEXT_DIM)
     print(f"Input shape: {input_tensor.shape}")
     print(f"Time shape: {t.shape}")
 
@@ -329,6 +343,7 @@ if __name__ == "__main__":
         out_channels=OUT_CHANNELS,
         features=[32, 64, 128],
         context_dim=CONTEXT_DIM,
+        embedding_dim=128,
         context_frames=CONTEXT_FRAMES,
     )
 

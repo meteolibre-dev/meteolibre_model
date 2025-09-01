@@ -18,6 +18,7 @@ dependencies = [
     "tensorboard>=2.20.0",
     "torch-dct>=0.1.6",
     "einops>=0.8.1",
+    "matplotlib",
 ]
 
 [tool.setuptools]

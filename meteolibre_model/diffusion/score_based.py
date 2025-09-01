@@ -54,11 +54,10 @@ def sigma_t_sq(t):
     """
     return BETA_MIN * t + (BETA_MAX - BETA_MIN) * t**2 / 2
 
-
 def trainer_step_edm_loss(model, batch, device, parametrization="standard"):
     """
     Performs a single training step for the score-based model using the
-    optimized loss weighting from Karras et al. (EDM).
+    optimized loss weighting and sigma sampling from Karras et al. (EDM).
 
     Args:
         model: The neural network model.
@@ -72,8 +71,7 @@ def trainer_step_edm_loss(model, batch, device, parametrization="standard"):
     with torch.no_grad():
         # Permute to (B, C, T, H, W)
         batch_data = batch["patch_data"].permute(0, 2, 1, 3, 4)
-
-        b, c, t, h, w = batch_data.shape
+        b, c, t_frames, h, w = batch_data.shape
 
         # Normalize
         batch_data = normalize(batch_data, device)
@@ -86,39 +84,53 @@ def trainer_step_edm_loss(model, batch, device, parametrization="standard"):
 
         mask_data = x_target != CLIP_MIN
 
+        # --- REMOVED ---
         # Sample timesteps
-        t_batch = torch.rand(b, device=device)
+        # t_batch = torch.rand(b, device=device)
 
         # Generate noise (n)
         noise = torch.randn_like(x_target)
 
-        # Compute sigma_t^2 (σ²)
-        sigma_sq = sigma_t_sq(t_batch) # Shape: (b,)
+        # +++ ADDED +++
+        # Sample sigma from a log-normal distribution, as recommended by Karras et al.
+        P_mean = -1.2
+        P_std = 1.2
+        log_sigma = P_mean + P_std * torch.randn(b, device=device)
+        sigma_batch = torch.exp(log_sigma) # sigma has shape (b,)
+        sigma_sq = sigma_batch.pow(2) # sigma^2 has shape (b,)
 
         # Expand for broadcasting
+        # Note: We now use sigma_batch directly for noising the data
+        sigma_exp = sigma_batch.view(b, 1, 1, 1, 1).expand(b, c, 2, h, w)
         sigma_sq_exp = sigma_sq.view(b, 1, 1, 1, 1).expand(b, c, 2, h, w)
 
-        # Add noise: x_t = x_target + sigma_t * noise
-        x_t = x_target + torch.sqrt(sigma_sq_exp) * noise
+        # Add noise: x_t = x_target + sigma * noise
+        x_t = x_target + sigma_exp * noise
 
     # Model input: concatenate context and x_t
     model_input = torch.cat([x_context, x_t], dim=2)  # (B, C, 6, H, W)
 
     context_info = batch["spatial_position"]
-    context_global = torch.cat([context_info, t_batch.unsqueeze(1)], dim=1)
+
+    # --- REMOVED ---
+    # context_global = torch.cat([context_info, t_batch.unsqueeze(1)], dim=1)
+
+    # +++ ADDED +++
+    # Condition the model on log(sigma) instead of t.
+    # log(sigma) is numerically more stable and suitable for network input.
+    context_global = torch.cat([context_info, log_sigma.unsqueeze(1)], dim=1)
+
 
     # Predict score
     predicted_score = model(model_input.float(), context_global.float())
 
     # -- New Loss Calculation based on Karras et al. 2022 --
 
-    # 1. Calculate the loss weighting λ(σ) from the paper[cite: 1068].
-    # λ(σ) = (σ² + σ_data²) / (σ * σ_data)²
+    # 1. Calculate the loss weighting λ(σ)
     loss_weight = (sigma_sq + SIGMA_DATA**2) / (sigma_sq * SIGMA_DATA**2)
     loss_weight_exp = loss_weight.view(b, 1, 1, 1, 1) # Reshape for broadcasting
 
     # 2. Calculate the squared denoising error term: ||n + σ² * score_pred||²
-    # This is equivalent to ||D_θ - y||²
     denoising_error_term = noise + sigma_sq_exp * predicted_score
     squared_l2_norm = denoising_error_term.pow(2)
 
