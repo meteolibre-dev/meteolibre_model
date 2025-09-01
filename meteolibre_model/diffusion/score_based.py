@@ -5,6 +5,7 @@ This module provides functions for training and generation using score-based dif
 
 import torch
 import einops
+from tqdm import tqdm
 
 from meteolibre_model.diffusion.utils import MEAN_CHANNEL, STD_CHANNEL
 
@@ -170,3 +171,93 @@ def edm_sampler_preconditioned(model, batch, x_context, num_steps=100, device="c
 
     model.train()
     return x_t.cpu()
+
+
+def edm_sampler_heun(
+    model, batch, x_context, num_steps=35, device="cuda",
+    sigma_min=0.002, sigma_max=80.0, rho=7.0
+):
+    """
+    Generates samples using the 2nd order Heun's method sampler from Karras et al. 2022.
+    This corresponds to Algorithm 1 in the paper.
+    """
+    model.eval()
+    with torch.no_grad():
+        model.to(device)
+        x_context = normalize(x_context[[0]], device)
+        last_context_frame = x_context[:, :, 3:4]
+        context_info = batch["spatial_position"].to(device)[[0]]
+        b, c, _, h, w = x_context.shape
+
+        # Define the sigma schedule as per Equation 5 in the paper [cite: 170]
+        step_indices = torch.arange(num_steps, device=device)
+        t_steps = (
+            sigma_max**(1/rho) + step_indices / (num_steps - 1) * (sigma_min**(1/rho) - sigma_max**(1/rho))
+        )**rho
+        sigmas = torch.cat([t_steps, torch.tensor([0.], device=device)])
+
+        # Start with pure noise, scaled by the first sigma
+        x_t = torch.randn(b, c, 2, h, w, device=device) * sigmas[0]
+
+        # Main sampling loop (using tqdm for progress)
+        for i in tqdm(range(num_steps), disable=False):
+            sigma_t = sigmas[i]
+            sigma_next = sigmas[i+1]
+            
+            # --- 1. Predictor step (Euler step from Algorithm 1, lines 4-5) ---
+            
+            # Get the derivative (d_i in the paper)
+            # This is dx/dt = (x - D(x, t)) / t, with t=sigma_t
+            # First, we need the denoiser output D(x, t)
+            
+            sigma_t_sq = sigma_t.pow(2)
+            c_skip = SIGMA_DATA**2 / (sigma_t_sq + SIGMA_DATA**2)
+            c_out = sigma_t * SIGMA_DATA / (sigma_t_sq + SIGMA_DATA**2).sqrt()
+            c_in = 1 / (sigma_t_sq + SIGMA_DATA**2).sqrt()
+
+            model_input_scaled = c_in * x_t
+            model_input = torch.cat([x_context, model_input_scaled], dim=2)
+            log_sigma_t = torch.log(sigma_t).expand(b)
+            context_global = torch.cat([context_info, log_sigma_t.unsqueeze(1)], dim=1)
+            
+            F_theta = model(model_input.float(), context_global.float())
+            denoised_estimate = c_skip * x_t + c_out * F_theta
+            
+            # This is d_i in Algorithm 1
+            d_i = (x_t - denoised_estimate) / sigma_t
+            
+            # Take the Euler step
+            x_next_predictor = x_t + d_i * (sigma_next - sigma_t)
+            
+            # --- 2. Corrector step (Algorithm 1, lines 7-8) ---
+            
+            # Only apply correction if the next sigma is not zero
+            if sigma_next != 0:
+                # Get the derivative at the predicted next point (d'_i in the paper)
+                sigma_next_sq = sigma_next.pow(2)
+                c_skip_next = SIGMA_DATA**2 / (sigma_next_sq + SIGMA_DATA**2)
+                c_out_next = sigma_next * SIGMA_DATA / (sigma_next_sq + SIGMA_DATA**2).sqrt()
+                c_in_next = 1 / (sigma_next_sq + SIGMA_DATA**2).sqrt()
+
+                model_input_scaled_next = c_in_next * x_next_predictor
+                model_input_next = torch.cat([x_context, model_input_scaled_next], dim=2)
+                log_sigma_next = torch.log(sigma_next).expand(b)
+                context_global_next = torch.cat([context_info, log_sigma_next.unsqueeze(1)], dim=1)
+
+                F_theta_next = model(model_input_next.float(), context_global_next.float())
+                denoised_estimate_next = c_skip_next * x_next_predictor + c_out_next * F_theta_next
+                
+                # This is d'_i in Algorithm 1
+                d_prime_i = (x_next_predictor - denoised_estimate_next) / sigma_next
+                
+                # Take the final Heun step using the average of the two derivatives
+                x_t = x_t + (d_i + d_prime_i) / 2.0 * (sigma_next - sigma_t)
+            else:
+                # For the final step to sigma=0, just use the Euler prediction
+                x_t = x_next_predictor
+
+        # Final output processing
+        x_t_absolute = x_t + last_context_frame.expand(-1, -1, 2, -1, -1)
+
+    model.train()
+    return x_t_absolute.cpu() # Return the absolute values, not the residual

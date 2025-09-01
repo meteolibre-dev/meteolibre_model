@@ -13,6 +13,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, ProjectConfiguration, LoggerType
 from tqdm.auto import tqdm
 import random
+from datetime import datetime
 
 from accelerate.utils import DistributedDataParallelKwargs
 from safetensors.torch import save_file, load_file
@@ -26,6 +27,7 @@ from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
 from meteolibre_model.diffusion.score_based import (
     trainer_step_edm_preconditioned_loss,
     edm_sampler_preconditioned,
+    edm_sampler_heun,
     normalize,
 )
 from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
@@ -49,11 +51,11 @@ def main():
     MODEL_DIR = "models/"
     PARAMETRIZATION = "residual"
     batch_size = 128
-    learning_rate = 1e-3
+    learning_rate = 5e-4
     num_epochs = 200
     seed = 42
     gradient_clip_value = 1.0  # Gradient clipping value
-    id_run = str(random.randint(0, 1000))
+    id_run = str(datetime.utcnow())[:19]
     # Set seed for reproducibility
     set_seed(seed)
 
@@ -87,7 +89,7 @@ def main():
         context_dim=4,
         embedding_dim=128,
         context_frames=4,
-        num_additional_resnet_blocks=1
+        num_additional_resnet_blocks=2
     )
 
     # Initialize optimizer
@@ -150,7 +152,7 @@ def main():
                 x_target = normalize(x_target, device)
 
                 unwrapped_model = accelerator.unwrap_model(model)
-                generated_images = edm_sampler_preconditioned(
+                generated_images = edm_sampler_heun(
                     unwrapped_model, batch, x_context, device=accelerator.device
                 )
 
