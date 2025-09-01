@@ -50,7 +50,7 @@ def main():
     SAVE_EVERY_N_EPOCHS = 5
     MODEL_DIR = "models/"
     PARAMETRIZATION = "residual"
-    batch_size = 128
+    batch_size = 64
     learning_rate = 5e-4
     num_epochs = 200
     seed = 42
@@ -89,7 +89,7 @@ def main():
         context_dim=4,
         embedding_dim=128,
         context_frames=4,
-        num_additional_resnet_blocks=2
+        num_additional_resnet_blocks=3
     )
 
     # Initialize optimizer

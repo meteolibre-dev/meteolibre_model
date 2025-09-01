@@ -49,97 +49,6 @@ class FilmLayer(nn.Module):
 
 
 # ==============================================================================
-# == 3D DC-AE Blocks
-# ==============================================================================
-
-
-class DCAE_DownsampleBlock3D(nn.Module):
-    """
-    3D DC-AE Downsample Block.
-    Downsamples spatial dimensions (H, W) by 2x, doubles channels, and keeps depth (D) intact.
-    """
-
-    def __init__(self, in_channels: int, out_channels: int):
-        super().__init__()
-        if out_channels != 2 * in_channels:
-            print(
-                f"Warning: out_channels ({out_channels}) is not double the in_channels ({in_channels})."
-            )
-
-        # Main path: 3D strided convolution, only striding on H and W
-        self.conv = nn.Conv3d(
-            in_channels,
-            out_channels,
-            kernel_size=(1, 3, 3),
-            stride=(1, 2, 2),
-            padding=(0, 1, 1),
-        )
-
-    def _shortcut(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Implements the non-parametric shortcut for 3D tensors.
-        This is a custom implementation of pixel_unshuffle for 5D tensors (N, C, D, H, W).
-        """
-        N, C, D, H, W = x.shape
-        # Reshape to create grid and then permute to bring grid elements to channel dimension
-        x_reshaped = x.view(N, C, D, H // 2, 2, W // 2, 2)
-        x_permuted = x_reshaped.permute(0, 1, 4, 5, 2, 3, 6).contiguous()
-        s2c = x_permuted.view(N, C * 4, D, H // 2, W // 2)
-
-        # Channel Averaging
-        c_new = s2c.shape[1]
-        group1 = s2c[:, : c_new // 2, :, :, :]
-        group2 = s2c[:, c_new // 2 :, :, :, :]
-        return (group1 + group2) / 2
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for the 3D downsampling block."""
-        return self.conv(x) + self._shortcut(x)
-
-
-class DCAE_UpsampleBlock3D(nn.Module):
-    """
-    3D DC-AE Upsample Block.
-    Upsamples spatial dimensions (H, W) by 2x, halves channels, and keeps depth (D) intact.
-    """
-
-    def __init__(self, in_channels: int, out_channels: int):
-        super().__init__()
-        if out_channels != in_channels // 2:
-            print(
-                f"Warning: out_channels ({out_channels}) is not half the in_channels ({in_channels})."
-            )
-
-        # Main path: 3D transposed convolution, only upsampling H and W
-        self.conv_transpose = nn.ConvTranspose3d(
-            in_channels,
-            out_channels,
-            kernel_size=(1, 2, 2),
-            stride=(1, 2, 2),
-            padding=0,
-        )
-
-    def _shortcut(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Implements the non-parametric shortcut for 3D tensors.
-        This is a custom implementation of pixel_shuffle for 5D tensors (N, C, D, H, W).
-        """
-
-        N, C, D, H, W = x.shape
-        # The inverse of the unshuffle operation
-        c2s = x.view(N, C // 4, 2, 2, D, H, W)
-        c2s_permuted = c2s.permute(0, 1, 4, 2, 5, 3, 6).contiguous()
-        c2s = c2s_permuted.view(N, C // 4, D, H * 2, W * 2)
-
-        # Channel Duplicating
-        return torch.cat([c2s, c2s], dim=1)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass for the 3D upsampling block."""
-        return self.conv_transpose(x) + self._shortcut(x)
-
-
-# ==============================================================================
 # == 3D U-Net Components
 # ==============================================================================
 
@@ -234,17 +143,16 @@ class UNet_DCAE_3D(nn.Module):
         self.encoder_convs = nn.ModuleList()
         self.decoder_convs = nn.ModuleList()
         self.downs = nn.ModuleList()
-        self.ups = nn.ModuleList()
 
         # --- Encoder (Downsampling Path) ---
         current_channels = in_channels
         for feature in features:
             self.encoder_convs.append(
                 ResNetBlock3D(
-                    current_channels, feature, embedding_dim, self.context_frames
+                    current_channels, feature * 2, embedding_dim, self.context_frames
                 )
             )
-            self.downs.append(DCAE_DownsampleBlock3D(feature, feature * 2))
+            self.downs.append(nn.MaxPool3d(kernel_size=(1, 2, 2), stride=(1, 2, 2)))
             current_channels = feature * 2
 
         # --- Bottleneck ---
@@ -255,9 +163,8 @@ class UNet_DCAE_3D(nn.Module):
 
         # --- Decoder (Upsampling Path) ---
         for feature in reversed(features):
-            self.ups.append(DCAE_UpsampleBlock3D(feature * 2, feature))
             self.decoder_convs.append(
-                ResNetBlock3D(feature * 2, feature, embedding_dim, self.context_frames)
+                ResNetBlock3D(feature * 4, feature, embedding_dim, self.context_frames)
             )
 
         self.additional_resnet_blocks = nn.ModuleList()
@@ -297,9 +204,9 @@ class UNet_DCAE_3D(nn.Module):
 
         # --- Decoder Path ---
         skip_connections = skip_connections[::-1]
-        for i in range(len(self.ups)):
+        for i in range(len(self.decoder_convs)):
 
-            x = self.ups[i](x)
+            x = F.interpolate(x, scale_factor=(1, 2, 2), mode='nearest')
             skip_connection = skip_connections[i]
 
             if x.shape != skip_connection.shape:

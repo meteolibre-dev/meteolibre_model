@@ -60,7 +60,7 @@ def trainer_step_edm_preconditioned_loss(model, batch, device):
 
         # Sample sigma (same as before)
         P_mean = -1.2
-        P_std = 1.2
+        P_std = 1.5
         log_sigma = P_mean + P_std * torch.randn(b, device=device)
         sigma = torch.exp(log_sigma)
         sigma_sq = sigma.pow(2)
@@ -105,6 +105,7 @@ def trainer_step_edm_preconditioned_loss(model, batch, device):
     # --- New Loss Calculation ---
     # The loss weight is now simpler: just 1 / (c_out^2)
     loss_weight = (sigma_sq + SIGMA_DATA**2) / (sigma_sq * SIGMA_DATA**2) # This is the same as before
+    loss_weight = loss_weight.clamp(min=0, max=100)
     loss_weight_exp = loss_weight.view(b, 1, 1, 1, 1)
 
     # The loss is the weighted MSE between the prediction and the *original clean data*
