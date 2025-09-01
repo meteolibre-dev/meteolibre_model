@@ -8,6 +8,7 @@ import math
 # == Conditioning Blocks
 # ==============================================================================
 
+
 class SinusoidalPosEmb(nn.Module):
     def __init__(self, dim):
         super().__init__()
@@ -22,44 +23,48 @@ class SinusoidalPosEmb(nn.Module):
         emb = torch.cat((emb.sin(), emb.cos()), dim=-1)
         return emb
 
+
 class FilmLayer(nn.Module):
     def __init__(self, context_dim, num_channels):
         super().__init__()
-        self.mlp = nn.Sequential(
-            nn.Linear(context_dim, num_channels * 2),
-            nn.ReLU()
-        )
+        self.mlp = nn.Sequential(nn.Linear(context_dim, num_channels * 2), nn.ReLU())
 
     def forward(self, x, context):
         mlp_out = self.mlp(context)
-        scale = mlp_out[:, :x.shape[1]]
-        bias = mlp_out[:, x.shape[1]:]
+        scale = mlp_out[:, : x.shape[1]]
+        bias = mlp_out[:, x.shape[1] :]
 
         scale = scale.view(x.shape[0], x.shape[1], 1, 1, 1)
         bias = bias.view(x.shape[0], x.shape[1], 1, 1, 1)
 
-        return (1. + scale) * x + bias
+        return (1.0 + scale) * x + bias
+
 
 # ==============================================================================
 # == 3D DC-AE Blocks
 # ==============================================================================
+
 
 class DCAE_DownsampleBlock3D(nn.Module):
     """
     3D DC-AE Downsample Block.
     Downsamples spatial dimensions (H, W) by 2x, doubles channels, and keeps depth (D) intact.
     """
+
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
         if out_channels != 2 * in_channels:
-            print(f"Warning: out_channels ({out_channels}) is not double the in_channels ({in_channels}).")
+            print(
+                f"Warning: out_channels ({out_channels}) is not double the in_channels ({in_channels})."
+            )
 
         # Main path: 3D strided convolution, only striding on H and W
         self.conv = nn.Conv3d(
-            in_channels, out_channels,
+            in_channels,
+            out_channels,
             kernel_size=(1, 3, 3),
             stride=(1, 2, 2),
-            padding=(0, 1, 1)
+            padding=(0, 1, 1),
         )
 
     def _shortcut(self, x: torch.Tensor) -> torch.Tensor:
@@ -75,30 +80,35 @@ class DCAE_DownsampleBlock3D(nn.Module):
 
         # Channel Averaging
         c_new = s2c.shape[1]
-        group1 = s2c[:, :c_new//2, :, :, :]
-        group2 = s2c[:, c_new//2:, :, :, :]
+        group1 = s2c[:, : c_new // 2, :, :, :]
+        group2 = s2c[:, c_new // 2 :, :, :, :]
         return (group1 + group2) / 2
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for the 3D downsampling block."""
         return self.conv(x) + self._shortcut(x)
 
+
 class DCAE_UpsampleBlock3D(nn.Module):
     """
     3D DC-AE Upsample Block.
     Upsamples spatial dimensions (H, W) by 2x, halves channels, and keeps depth (D) intact.
     """
+
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
         if out_channels != in_channels // 2:
-             print(f"Warning: out_channels ({out_channels}) is not half the in_channels ({in_channels}).")
+            print(
+                f"Warning: out_channels ({out_channels}) is not half the in_channels ({in_channels})."
+            )
 
         # Main path: 3D transposed convolution, only upsampling H and W
         self.conv_transpose = nn.ConvTranspose3d(
-            in_channels, out_channels,
+            in_channels,
+            out_channels,
             kernel_size=(1, 2, 2),
             stride=(1, 2, 2),
-            padding=0
+            padding=0,
         )
 
     def _shortcut(self, x: torch.Tensor) -> torch.Tensor:
@@ -106,6 +116,7 @@ class DCAE_UpsampleBlock3D(nn.Module):
         Implements the non-parametric shortcut for 3D tensors.
         This is a custom implementation of pixel_shuffle for 5D tensors (N, C, D, H, W).
         """
+
         N, C, D, H, W = x.shape
         # The inverse of the unshuffle operation
         c2s = x.view(N, C // 4, 2, 2, D, H, W)
@@ -119,22 +130,39 @@ class DCAE_UpsampleBlock3D(nn.Module):
         """Forward pass for the 3D upsampling block."""
         return self.conv_transpose(x) + self._shortcut(x)
 
+
 # ==============================================================================
 # == 3D U-Net Components
 # ==============================================================================
+
 
 class ResNetBlock3D(nn.Module):
     """
     A 3D ResNet block with FiLM conditioning.
     """
-    def __init__(self, in_channels: int, out_channels: int, context_dim: int, context_frames: int):
+
+    def __init__(
+        self, in_channels: int, out_channels: int, context_dim: int, context_frames: int
+    ):
         super().__init__()
         self.context_frames = context_frames
 
-        self.conv1 = nn.Conv3d(in_channels, out_channels, kernel_size=(1, 3, 3), padding=(0, 1, 1), bias=False)
+        self.conv1 = nn.Conv3d(
+            in_channels,
+            out_channels,
+            kernel_size=(1, 3, 3),
+            padding=(0, 1, 1),
+            bias=False,
+        )
         self.bn1 = nn.InstanceNorm3d(out_channels, affine=True)
         self.relu = nn.ReLU(inplace=True)
-        self.conv2 = nn.Conv3d(out_channels, out_channels, kernel_size=(1, 3, 3), padding=(0, 1, 1), bias=False)
+        self.conv2 = nn.Conv3d(
+            out_channels,
+            out_channels,
+            kernel_size=(1, 3, 3),
+            padding=(0, 1, 1),
+            bias=False,
+        )
         self.bn2 = nn.InstanceNorm3d(out_channels, affine=True)
 
         self.film = FilmLayer(context_dim, out_channels)
@@ -143,22 +171,23 @@ class ResNetBlock3D(nn.Module):
         if in_channels != out_channels:
             self.shortcut = nn.Sequential(
                 nn.Conv3d(in_channels, out_channels, kernel_size=1, bias=False),
-                nn.InstanceNorm3d(out_channels, affine=True)
+                nn.InstanceNorm3d(out_channels, affine=True),
             )
 
     def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
         h = self.relu(self.bn1(self.conv1(x)))
 
         # Apply FiLM only to the frames after context_frames
-        h_context = h[:, :, :self.context_frames, :, :]
-        h_noisy = h[:, :, self.context_frames:, :, :]
-        
+        h_context = h[:, :, : self.context_frames, :, :]
+        h_noisy = h[:, :, self.context_frames :, :, :]
+
         h_noisy_filmed = self.film(h_noisy, context)
-        
+
         h = torch.cat([h_context, h_noisy_filmed], dim=2)
 
         h = self.bn2(self.conv2(h))
         return self.relu(h + self.shortcut(x))
+
 
 # ==============================================================================
 # == Full 3D U-Net Architecture
@@ -167,17 +196,25 @@ class UNet_DCAE_3D(nn.Module):
     """
     A 3D U-Net architecture that only performs spatial down/up-sampling, with FiLM conditioning.
     """
-    def __init__(self, in_channels: int = 1, out_channels: int = 1, features: List[int] = [32, 64, 128, 256], context_dim: int = 128, context_frames: int = 4):
+
+    def __init__(
+        self,
+        in_channels: int = 1,
+        out_channels: int = 1,
+        features: List[int] = [32, 64, 128, 256],
+        context_dim: int = 128,
+        context_frames: int = 4,
+        num_additional_resnet_blocks: int = 0,
+    ):
         super().__init__()
         self.features = features
         self.context_dim = context_dim
         self.context_frames = context_frames
+        self.num_additional_resnet_blocks = num_additional_resnet_blocks
 
         # --- Time Embedding ---
         self.time_mlp = nn.Sequential(
-            nn.Linear(context_dim, 128),
-            nn.ReLU(),
-            nn.Linear(128, context_dim)
+            nn.Linear(context_dim, 128), nn.ReLU(), nn.Linear(128, context_dim)
         )
 
         self.encoder_convs = nn.ModuleList()
@@ -188,24 +225,43 @@ class UNet_DCAE_3D(nn.Module):
         # --- Encoder (Downsampling Path) ---
         current_channels = in_channels
         for feature in features:
-            self.encoder_convs.append(ResNetBlock3D(current_channels, feature, context_dim, self.context_frames))
+            self.encoder_convs.append(
+                ResNetBlock3D(
+                    current_channels, feature, context_dim, self.context_frames
+                )
+            )
             self.downs.append(DCAE_DownsampleBlock3D(feature, feature * 2))
             current_channels = feature * 2
 
         # --- Bottleneck ---
         bottleneck_channels = features[-1] * 2
-        self.bottleneck = ResNetBlock3D(bottleneck_channels, bottleneck_channels, context_dim, self.context_frames)
+        self.bottleneck = ResNetBlock3D(
+            bottleneck_channels, bottleneck_channels, context_dim, self.context_frames
+        )
 
         # --- Decoder (Upsampling Path) ---
         for feature in reversed(features):
             self.ups.append(DCAE_UpsampleBlock3D(feature * 2, feature))
-            self.decoder_convs.append(ResNetBlock3D(feature * 2, feature, context_dim, self.context_frames))
+            self.decoder_convs.append(
+                ResNetBlock3D(feature * 2, feature, context_dim, self.context_frames)
+            )
+
+        self.additional_resnet_blocks = nn.ModuleList()
+        for feature in reversed(features):
+            blocks = nn.ModuleList()
+            for _ in range(self.num_additional_resnet_blocks):
+                blocks.append(
+                    ResNetBlock3D(feature, feature, context_dim, self.context_frames)
+                )
+            self.additional_resnet_blocks.append(blocks)
 
         # --- Final Output Layer ---
         input_depth = self.context_frames + 2
         output_depth = 2
         kernel_depth = input_depth - output_depth + 1
-        self.final_conv = nn.Conv3d(features[0], out_channels, kernel_size=(kernel_depth, 1, 1))
+        self.final_conv = nn.Conv3d(
+            features[0], out_channels, kernel_size=(kernel_depth, 1, 1)
+        )
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         context = self.time_mlp(t)
@@ -213,16 +269,22 @@ class UNet_DCAE_3D(nn.Module):
 
         # --- Encoder Path ---
         for i in range(len(self.features)):
+
+            
+
             x = self.encoder_convs[i](x, context)
+
+
             skip_connections.append(x)
             x = self.downs[i](x)
-        
+
         # --- Bottleneck ---
         x = self.bottleneck(x, context)
 
         # --- Decoder Path ---
         skip_connections = skip_connections[::-1]
         for i in range(len(self.ups)):
+
             x = self.ups[i](x)
             skip_connection = skip_connections[i]
 
@@ -232,11 +294,17 @@ class UNet_DCAE_3D(nn.Module):
             concat_skip = torch.cat((skip_connection, x), dim=1)
             x = self.decoder_convs[i](concat_skip, context)
 
+            for block in self.additional_resnet_blocks[i]:
+                x = block(x, context)
+
         return self.final_conv(x)
 
+
 # --- Example Usage ---
-if __name__ == '__main__':
-    print("--- Testing Full 3D U-Net with DC-AE, ResNet Blocks, and FiLM conditioning ---")
+if __name__ == "__main__":
+    print(
+        "--- Testing Full 3D U-Net with DC-AE, ResNet Blocks, and FiLM conditioning ---"
+    )
 
     # Define model parameters
     CONTEXT_FRAMES = 4
@@ -248,13 +316,21 @@ if __name__ == '__main__':
     CONTEXT_DIM = 128
 
     # Create a random input tensor (N, C, D, H, W)
-    input_tensor = torch.randn(BATCH_SIZE, IN_CHANNELS, IMG_DEPTH, IMG_HEIGHT, IMG_WIDTH)
+    input_tensor = torch.randn(
+        BATCH_SIZE, IN_CHANNELS, IMG_DEPTH, IMG_HEIGHT, IMG_WIDTH
+    )
     t = torch.rand(BATCH_SIZE)
     print(f"Input shape: {input_tensor.shape}")
     print(f"Time shape: {t.shape}")
 
     # Initialize the model
-    model = UNet_DCAE_3D(in_channels=IN_CHANNELS, out_channels=OUT_CHANNELS, features=[32, 64, 128], context_dim=CONTEXT_DIM, context_frames=CONTEXT_FRAMES)
+    model = UNet_DCAE_3D(
+        in_channels=IN_CHANNELS,
+        out_channels=OUT_CHANNELS,
+        features=[32, 64, 128],
+        context_dim=CONTEXT_DIM,
+        context_frames=CONTEXT_FRAMES,
+    )
 
     # Perform a forward pass
     output_tensor = model(input_tensor, t)
@@ -263,7 +339,9 @@ if __name__ == '__main__':
 
     # Verify the output shape is as expected
     expected_shape = (BATCH_SIZE, OUT_CHANNELS, 2, IMG_HEIGHT, IMG_WIDTH)
-    assert output_tensor.shape == expected_shape, f"Shape mismatch! Expected {expected_shape}, got {output_tensor.shape}"
+    assert output_tensor.shape == expected_shape, (
+        f"Shape mismatch! Expected {expected_shape}, got {output_tensor.shape}"
+    )
 
     print("✅ 3D U-Net model shape test PASSED.")
 

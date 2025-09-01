@@ -48,7 +48,7 @@ def main():
     SAVE_EVERY_N_EPOCHS = 5
     MODEL_DIR = "models/"
     PARAMETRIZATION = "residual"
-    batch_size = 128
+    batch_size = 64
     learning_rate = 1e-3
     num_epochs = 200
     seed = 42
@@ -83,9 +83,10 @@ def main():
     model = UNet_DCAE_3D(
         in_channels=12,  # Adjust based on your data
         out_channels=12,  # Adjust based on your data
-        features=[32, 64, 128, 256],
+        features=[64, 128, 256],
         context_dim=4,
         context_frames=4,
+        num_additional_resnet_blocks=1
     )
 
     # Initialize optimizer
@@ -153,8 +154,8 @@ def main():
                 )
 
                 # Select one channel and one batch item for visualization
-                generated_sample = generated_images[0, 0]  # Shape: (2, H, W)
-                target_sample = x_target[0, 0].cpu()  # Shape: (2, H, W)
+                generated_sample = generated_images[0, -1]  # Shape: (2, H, W)
+                target_sample = x_target[0, -1].cpu()  # Shape: (2, H, W)
 
                 all_frames = torch.cat([generated_sample, target_sample], dim=0) / 8.
                 all_frames = all_frames.clamp(-10, 10)
