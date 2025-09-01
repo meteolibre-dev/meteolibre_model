@@ -10,8 +10,7 @@ from meteolibre_model.diffusion.utils import MEAN_CHANNEL, STD_CHANNEL
 
 # -- Parameters --
 CLIP_MIN = -4
-BETA_MIN = 0.1
-BETA_MAX = 20.0
+
 
 SIGMA_DATA = 1.0
 
@@ -40,172 +39,134 @@ def normalize(batch_data, device):
 
     return batch_data
 
-def g(t):
+def trainer_step_edm_preconditioned_loss(model, batch, device):
     """
-    Diffusion coefficient g(t) = sqrt(beta(t)), where beta(t) = beta_min + t * (beta_max - beta_min)
-    """
-    beta_t = BETA_MIN + t * (BETA_MAX - BETA_MIN)
-    return torch.sqrt(beta_t)
-
-def sigma_t_sq(t):
-    """
-    Compute sigma_t^2 = integral_0^t g(s)^2 ds = integral_0^t beta(s) ds
-    Since beta(s) = beta_min + s * (beta_max - beta_min), integral = beta_min * t + (beta_max - beta_min) * t^2 / 2
-    """
-    return BETA_MIN * t + (BETA_MAX - BETA_MIN) * t**2 / 2
-
-def trainer_step_edm_loss(model, batch, device, parametrization="standard"):
-    """
-    Performs a single training step for the score-based model using the
-    optimized loss weighting and sigma sampling from Karras et al. (EDM).
-
-    Args:
-        model: The neural network model.
-        batch: Batch data from the dataset.
-        device: Device to run on.
-        parametrization: Type of parametrization ("standard" or "residual").
-
-    Returns:
-        The loss value for the training step.
+    Performs a single training step using the Karras et al. preconditioning.
+    This is the recommended, numerically stable approach.
     """
     with torch.no_grad():
-        # Permute to (B, C, T, H, W)
+        # Data preparation (same as before)
         batch_data = batch["patch_data"].permute(0, 2, 1, 3, 4)
         b, c, t_frames, h, w = batch_data.shape
-
-        # Normalize
         batch_data = normalize(batch_data, device)
+        x_context = batch_data[:, :, :4]
+        x_target = batch_data[:, :, 4:] # This is our clean data, x_0
 
-        x_context = batch_data[:, :, :4]  # Context frames
-        x_target = batch_data[:, :, 4:]  # Target frames (y)
-
-        if parametrization == "residual":
-            x_target = batch_data[:, :, 4:] - batch_data[:, :, 3:4]
+        last_context_frame = x_context[:, :, 3:4] # Shape: (B, C, 1, H, W)
+        x_target_residual = x_target - last_context_frame
 
         mask_data = x_target != CLIP_MIN
 
-        # --- REMOVED ---
-        # Sample timesteps
-        # t_batch = torch.rand(b, device=device)
-
-        # Generate noise (n)
-        noise = torch.randn_like(x_target)
-
-        # +++ ADDED +++
-        # Sample sigma from a log-normal distribution, as recommended by Karras et al.
+        # Sample sigma (same as before)
         P_mean = -1.2
         P_std = 1.2
         log_sigma = P_mean + P_std * torch.randn(b, device=device)
-        sigma_batch = torch.exp(log_sigma) # sigma has shape (b,)
-        sigma_sq = sigma_batch.pow(2) # sigma^2 has shape (b,)
+        sigma = torch.exp(log_sigma)
+        sigma_sq = sigma.pow(2)
 
-        # Expand for broadcasting
-        # Note: We now use sigma_batch directly for noising the data
-        sigma_exp = sigma_batch.view(b, 1, 1, 1, 1).expand(b, c, 2, h, w)
-        sigma_sq_exp = sigma_sq.view(b, 1, 1, 1, 1).expand(b, c, 2, h, w)
-
+        # Generate noise
+        noise = torch.randn_like(x_target)
+        
+        # Reshape sigma for broadcasting
+        sigma_exp = sigma.view(b, 1, 1, 1, 1)
+        
         # Add noise: x_t = x_target + sigma * noise
-        x_t = x_target + sigma_exp * noise
+        x_t = x_target_residual + sigma_exp * noise
 
-    # Model input: concatenate context and x_t
-    model_input = torch.cat([x_context, x_t], dim=2)  # (B, C, 6, H, W)
+    # --- NEW: Preconditioning ---
+    # These are the scaling factors from the EDM paper (Appendix B.2)
+    c_skip = SIGMA_DATA**2 / (sigma_sq + SIGMA_DATA**2)
+    c_out = sigma * SIGMA_DATA / (sigma_sq + SIGMA_DATA**2).sqrt()
+    c_in = 1 / (sigma_sq + SIGMA_DATA**2).sqrt()
+    
+    # Reshape for broadcasting
+    c_skip = c_skip.view(b, 1, 1, 1, 1)
+    c_out = c_out.view(b, 1, 1, 1, 1)
+    c_in = c_in.view(b, 1, 1, 1, 1)
+    
+    # 1. Scale the model input
+    model_input_scaled = c_in * x_t
 
+    # Model input: concatenate context and the scaled x_t
+    model_input = torch.cat([x_context, model_input_scaled], dim=2)
+
+    # Condition on log(sigma)
     context_info = batch["spatial_position"]
-
-    # --- REMOVED ---
-    # context_global = torch.cat([context_info, t_batch.unsqueeze(1)], dim=1)
-
-    # +++ ADDED +++
-    # Condition the model on log(sigma) instead of t.
-    # log(sigma) is numerically more stable and suitable for network input.
     context_global = torch.cat([context_info, log_sigma.unsqueeze(1)], dim=1)
 
+    # --- Model now predicts the denoised data x_0 ---
+    # The network's output is F_theta
+    F_theta = model(model_input.float(), context_global.float())
+    
+    # 2. Un-scale the model output to get the final denoised prediction
+    denoised_prediction = c_skip * x_t + c_out * F_theta
 
-    # Predict score
-    predicted_score = model(model_input.float(), context_global.float())
+    # --- New Loss Calculation ---
+    # The loss weight is now simpler: just 1 / (c_out^2)
+    loss_weight = (sigma_sq + SIGMA_DATA**2) / (sigma_sq * SIGMA_DATA**2) # This is the same as before
+    loss_weight_exp = loss_weight.view(b, 1, 1, 1, 1)
 
-    # -- New Loss Calculation based on Karras et al. 2022 --
-
-    # 1. Calculate the loss weighting λ(σ)
-    loss_weight = (sigma_sq + SIGMA_DATA**2) / (sigma_sq * SIGMA_DATA**2)
-    loss_weight_exp = loss_weight.view(b, 1, 1, 1, 1) # Reshape for broadcasting
-
-    # 2. Calculate the squared denoising error term: ||n + σ² * score_pred||²
-    denoising_error_term = noise + sigma_sq_exp * predicted_score
-    squared_l2_norm = denoising_error_term.pow(2)
-
-    # 3. Apply the weight λ(σ) to the squared error.
-    weighted_squared_error = loss_weight_exp * squared_l2_norm
-
-    # 4. Compute the mean of the weighted, masked loss.
+    # The loss is the weighted MSE between the prediction and the *original clean data*
+    squared_error = (denoised_prediction - x_target)**2
+    weighted_squared_error = loss_weight_exp * squared_error
+    
     loss = torch.mean(weighted_squared_error[mask_data])
-
+    
     return loss
-
-def full_image_generation(model, batch, x_context, steps=100, device="cuda", parametrization="standard"):
+def edm_sampler_preconditioned(model, batch, x_context, num_steps=100, device="cuda", parametrization="standard",
+                               sigma_min=0.002, sigma_max=80.0, rho=7.0):
     """
-    Generates full images using score-based reverse SDE solver.
-
-    Args:
-        model: The neural network model.
-        batch: Batch data for context.
-        x_context: Context frames.
-        steps: Number of SDE steps.
-        device: Device to run on.
-        parametrization: Type of parametrization ("standard" or "residual").
-
-    Returns:
-        Generated images.
+    Corrected sampler for the preconditioned model.
     """
     model.eval()
     with torch.no_grad():
         model.to(device)
-        x_context = x_context.to(device)
-        x_context = x_context[[0], :, :, :, :]  # Use first batch item
-        x_context = normalize(x_context, device)
+        x_context = normalize(x_context[[0]], device)
+        last_context_frame = x_context[:, :, 3:4]
+        context_info = batch["spatial_position"].to(device)[[0]]
+        b, c, _, h, w = x_context.shape
 
-        context_info = batch["spatial_position"].to(device)[[0], :]
+        # Define the sigma schedule (same as before)
+        step_indices = torch.arange(num_steps, device=device)
+        t_steps = (sigma_max**(1/rho) + step_indices / (num_steps - 1) * (sigma_min**(1/rho) - sigma_max**(1/rho)))**rho
+        sigmas = torch.cat([t_steps, torch.tensor([0.], device=device)])
 
-        batch_size, nb_channel, _, h, w = x_context.shape
+        # Start with pure noise (same as before)
+        x_t = torch.randn(b, c, 2, h, w, device=device) * sigmas[0]
 
-        # Start with noise at t=1
-        t_start = 1.0
-        sigma_start_sq = sigma_t_sq(torch.tensor(t_start, device=device))
-        sigma_start = torch.sqrt(sigma_start_sq)
-        x_t = sigma_start * torch.randn(batch_size, nb_channel, 2, h, w, device=device)
+        # Main sampling loop
+        for i in range(num_steps):
+            sigma_t = sigmas[i]
+            sigma_next = sigmas[i+1]
+            sigma_t_sq = sigma_t.pow(2)
 
-        dt = 1.0 / steps
+            # --- NEW: Calculate Preconditioning Constants ---
+            c_skip = SIGMA_DATA**2 / (sigma_t_sq + SIGMA_DATA**2)
+            c_out = sigma_t * SIGMA_DATA / (sigma_t_sq + SIGMA_DATA**2).sqrt()
+            c_in = 1 / (sigma_t_sq + SIGMA_DATA**2).sqrt()
 
-        for i in range(steps):
-            t_val = 1 - i * dt
-            t_batch = torch.full((batch_size,), t_val, device=device)
+            # --- CHANGED: Scale input and call model ---
+            model_input_scaled = c_in * x_t # <-- Scale the input
+            model_input = torch.cat([x_context, model_input_scaled], dim=2)
+            
+            log_sigma_t = torch.log(sigma_t).expand(b)
+            context_global = torch.cat([context_info, log_sigma_t.unsqueeze(1)], dim=1)
 
-            context_global = torch.cat([context_info, t_batch.unsqueeze(1)], dim=1)
+            # Model predicts F_theta
+            F_theta = model(model_input.float(), context_global.float())
+            
+            # --- CHANGED: Calculate denoised estimate with preconditioning ---
+            denoised_estimate = c_skip * x_t + c_out * F_theta # <-- Un-scale the output
 
-            model_input = torch.cat([x_context, x_t], dim=2)
-            score = model(model_input.float(), context_global.float())
+            # Euler step (this part remains the same)
+            d = (x_t - denoised_estimate) / sigma_t
+            x_next = x_t + d * (sigma_next - sigma_t)
+            
+            x_t = x_next
+        
+        # Final output processing (same as before)
+        x_t_absolute = x_t + last_context_frame.expand(-1, -1, 2, -1, -1)
 
-            # Compute g(t)
-            g_val = g(t_batch)
-            g_sq = g_val ** 2
-
-            # Expand for broadcasting
-            g_sq_exp = g_sq.view(batch_size, 1, 1, 1, 1).expand(batch_size, nb_channel, 2, h, w)
-            g_exp = g_val.view(batch_size, 1, 1, 1, 1).expand(batch_size, nb_channel, 2, h, w)
-
-            # Reverse SDE step: dx = g(t)^2 * score * dt + g(t) * dW
-            drift = g_sq_exp * score
-            diffusion_coeff = g_exp * torch.sqrt(torch.tensor(dt, device=device))
-            noise = torch.randn_like(x_t)
-
-            x_t = x_t + drift * dt + diffusion_coeff * noise
-
-            # Clamp to prevent divergence
-            x_t = x_t.clamp(-7, 7)
-
-        if parametrization == "residual":
-            last_context = x_context[:, :, 3:4]  # (batch_size, nb_channel, 1, h, w)
-            x_t = x_t + last_context.expand(-1, -1, 2, -1, -1)
 
     model.train()
     return x_t.cpu()

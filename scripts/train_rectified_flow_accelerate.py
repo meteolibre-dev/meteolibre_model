@@ -48,7 +48,7 @@ def main():
     SAVE_EVERY_N_EPOCHS = 5
     MODEL_DIR = "models/"
     PARAMETRIZATION = "residual"
-    batch_size = 64
+    batch_size = 128
     learning_rate = 1e-3
     num_epochs = 200
     seed = 42

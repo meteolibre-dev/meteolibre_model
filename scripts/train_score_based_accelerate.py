@@ -24,8 +24,8 @@ sys.path.insert(0, project_root)
 
 from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
 from meteolibre_model.diffusion.score_based import (
-    trainer_step_edm_loss,
-    full_image_generation,
+    trainer_step_edm_preconditioned_loss,
+    edm_sampler_preconditioned,
     normalize,
 )
 from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
@@ -111,7 +111,7 @@ def main():
         for batch in progress_bar:
             # Perform training step
             with accelerator.accumulate(model):
-                loss = trainer_step_edm_loss(model, batch, device, PARAMETRIZATION)
+                loss = trainer_step_edm_preconditioned_loss(model, batch, device)
                 accelerator.backward(loss)
 
                 # Gradient clipping
@@ -150,8 +150,8 @@ def main():
                 x_target = normalize(x_target, device)
 
                 unwrapped_model = accelerator.unwrap_model(model)
-                generated_images = full_image_generation(
-                    unwrapped_model, batch, x_context, device=accelerator.device, parametrization=PARAMETRIZATION
+                generated_images = edm_sampler_preconditioned(
+                    unwrapped_model, batch, x_context, device=accelerator.device
                 )
 
                 # Select one channel and one batch item for visualization

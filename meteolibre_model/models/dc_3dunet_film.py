@@ -162,7 +162,7 @@ class ResNetBlock3D(nn.Module):
             padding=(0, 1, 1),
             bias=False,
         )
-        self.bn1 = nn.InstanceNorm3d(out_channels, affine=True)
+        self.bn1 = nn.Identity() #nn.InstanceNorm3d(out_channels, affine=True)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv3d(
             out_channels,
@@ -171,7 +171,7 @@ class ResNetBlock3D(nn.Module):
             padding=(0, 1, 1),
             bias=False,
         )
-        self.bn2 = nn.InstanceNorm3d(out_channels, affine=True)
+        self.bn2 = nn.Identity() #nn.InstanceNorm3d(out_channels, affine=True)
 
         self.film = FilmLayer(embedding_dim, out_channels)
 
@@ -179,7 +179,7 @@ class ResNetBlock3D(nn.Module):
         if in_channels != out_channels:
             self.shortcut = nn.Sequential(
                 nn.Conv3d(in_channels, out_channels, kernel_size=1, bias=False),
-                nn.InstanceNorm3d(out_channels, affine=True),
+                nn.Identity() #nn.InstanceNorm3d(out_channels, affine=True),
             )
 
     def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
