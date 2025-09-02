@@ -13,6 +13,8 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed, ProjectConfiguration, LoggerType
 from tqdm.auto import tqdm
 import random
+from datetime import datetime
+
 
 from accelerate.utils import DistributedDataParallelKwargs
 from safetensors.torch import save_file, load_file
@@ -53,7 +55,7 @@ def main():
     num_epochs = 200
     seed = 42
     gradient_clip_value = 1.0  # Gradient clipping value
-    id_run = str(random.randint(0, 1000))
+    id_run = str(datetime.utcnow())[:19]
     # Set seed for reproducibility
     set_seed(seed)
 

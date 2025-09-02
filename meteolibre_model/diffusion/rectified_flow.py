@@ -5,11 +5,41 @@ This module provides functions for training and generation using rectified flow.
 
 import torch
 import einops
+import math
 
 from meteolibre_model.diffusion.utils import MEAN_CHANNEL, STD_CHANNEL
 
 # -- Parameters --
 CLIP_MIN = -4
+COEF_NOISE = 3
+
+def log(t, eps=1e-20):
+    return torch.log(t.clamp(min=eps))
+
+def logsnr_schedule_cosine(t, logsnr_min=-15, logsnr_max=15):
+
+    t_min = math.atan(math.exp(-0.5 * logsnr_max))
+    t_max = math.atan(math.exp(-0.5 * logsnr_min))
+    return -2 * log(torch.tan(t_min + t * (t_max - t_min)))
+
+def logsnr_schedule_cosine_shifted(coef, t):
+
+    logsnr_t = logsnr_schedule_cosine(t)
+    return logsnr_t + 2 * math.log(coef)
+
+def get_proper_noise(coef, t):
+
+    t_shift = 1. - t
+
+    logsnr_t = logsnr_schedule_cosine_shifted(coef, t_shift)
+    beta_t = torch.sqrt(torch.sigmoid(logsnr_t))
+
+    return 1. - beta_t
+
+
+
+def get_logsnr(coef, t):
+    return logsnr_schedule_cosine_shifted(coef, t).clamp(min=-15, max=15)
 
 def normalize(batch_data, device):
     """
@@ -38,19 +68,41 @@ def normalize(batch_data, device):
 
 def get_x_t(x0, x1, t):
     """
-    Get the interpolated point x_t = (1 - s(t)) * x0 + s(t) * x1 where s(t) = sin(PI/2 * sqrt(t))^2
+    Get the interpolated point x_t = s(t) * x0 + (1 - s(t)) * x1
     """
-    theta = torch.pi / 2 * torch.sqrt(t)
-    s_t = torch.sin(theta) ** 2
-    return (1 - s_t) * x0 + s_t * x1
+    s_t = get_proper_noise(COEF_NOISE, t)
+
+    return s_t * x0 + (1 - s_t) * x1
 
 def ds_dt(t):
-    t_clamped = torch.clamp(t, min=1e-6)
-    sqrt_t = torch.sqrt(t_clamped)
-    theta = torch.pi / 2 * sqrt_t
-    sin_theta = torch.sin(theta)
-    cos_theta = torch.cos(theta)
-    return (torch.pi / 2) * sin_theta * cos_theta / sqrt_t
+    """
+    Computes the derivative of s(t) = 1 - beta_t where beta_t is derived from a shifted cosine schedule.
+    s(t) = 1 - sqrt(sigmoid(logsnr_schedule_cosine_shifted(3, 1-t)))
+    """
+    t_clamped = torch.clamp(t, min=1e-6, max=1-1e-6)
+    t_shift = 1. - t_clamped
+
+    # Recompute intermediate values from get_proper_noise
+    logsnr_t = logsnr_schedule_cosine_shifted(COEF_NOISE, t_shift)
+    sigmoid_logsnr_t = torch.sigmoid(logsnr_t)
+    sqrt_sigmoid_logsnr_t = torch.sqrt(sigmoid_logsnr_t)
+
+    # Derivative of sigmoid
+    d_sigmoid = sigmoid_logsnr_t * (1 - sigmoid_logsnr_t)
+
+    # Derivative of logsnr_schedule_cosine
+    t_min = math.atan(math.exp(-0.5 * 15))
+    t_max = math.atan(math.exp(-0.5 * -15))
+    tan_val = torch.tan(t_min + t_shift * (t_max - t_min))
+    d_logsnr = -2 * (t_max - t_min) / tan_val * (1 / torch.cos(t_min + t_shift * (t_max - t_min)))**2
+
+    # Chain rule for ds/dt
+    # ds/dt = d(1-beta_t)/dt = -d(beta_t)/dt
+    # d(beta_t)/dt = d(sqrt(sigmoid))/d(sigmoid) * d(sigmoid)/d(logsnr) * d(logsnr)/d(t_shift) * d(t_shift)/dt
+    # d(t_shift)/dt = -1
+    d_beta_dt = (0.5 / sqrt_sigmoid_logsnr_t) * d_sigmoid * d_logsnr * (-1)
+
+    return -d_beta_dt
 
 def trainer_step(model, batch, device, parametrization="standard"):
     """
@@ -94,9 +146,9 @@ def trainer_step(model, batch, device, parametrization="standard"):
         # Get x_t
         x_t = get_x_t(x_target, x1, t_expanded)
 
-        # True velocity v = ds/dt * (x1 - x0)
+        # True velocity v = ds/dt * (x0 - x1)
         t_expanded_full = t_batch.view(b, 1, 1, 1, 1).expand(b, c, 2, h, w)
-        true_v = ds_dt(t_expanded_full) * (x1 - x_target)
+        true_v = ds_dt(t_expanded_full) * (x_target - x1)
 
     # Model input: concatenate context and x_t
     model_input = torch.cat([x_context, x_t], dim=2)  # (B, C, 6, H, W)
