@@ -34,7 +34,7 @@ def get_proper_noise(coef, t):
     logsnr_t = logsnr_schedule_cosine_shifted(coef, t_shift)
     beta_t = torch.sqrt(torch.sigmoid(logsnr_t))
 
-    return 1. - beta_t
+    return 1. - beta_t, logsnr_t
 
 
 
@@ -70,9 +70,9 @@ def get_x_t(x0, x1, t):
     """
     Get the interpolated point x_t = s(t) * x0 + (1 - s(t)) * x1
     """
-    s_t = get_proper_noise(COEF_NOISE, t)
+    s_t, logsnr_t = get_proper_noise(COEF_NOISE, t)
 
-    return s_t * x0 + (1 - s_t) * x1
+    return s_t * x0 + (1 - s_t) * x1, logsnr_t
 
 def ds_dt(t):
     """
@@ -112,7 +112,7 @@ def trainer_step(model, batch, device, parametrization="standard"):
         model: The neural network model.
         batch: Batch data from the dataset.
         device: Device to run on.
-        parametrization: Type of parametrization ("standard" or "residual").
+        parametrization: Type of parametrization ("standard" or "endpoint").
 
     Returns:
         The loss value for the training step.
@@ -127,10 +127,8 @@ def trainer_step(model, batch, device, parametrization="standard"):
         batch_data = normalize(batch_data, device)
 
         x_context = batch_data[:, :, :4]  # Context frames
-        x_target = batch_data[:, :, 4:]  # Target frames (x0)
-
-        if parametrization == "residual":
-            x_target = batch_data[:, :, 4:] - batch_data[:, :, 3:4]
+        # Always forecast the residual
+        x_target = batch_data[:, :, 4:] - batch_data[:, :, 3:4]  # Residual
 
         mask_data = x_target != CLIP_MIN
 
@@ -144,23 +142,29 @@ def trainer_step(model, batch, device, parametrization="standard"):
         t_expanded = t_batch.view(b, 1, 1, 1, 1).expand(-1, -1, 2, -1, -1)
 
         # Get x_t
-        x_t = get_x_t(x_target, x1, t_expanded)
+        x_t, logsnr_t = get_x_t(x_target, x1, t_expanded)
 
-        # True velocity v = ds/dt * (x0 - x1)
-        t_expanded_full = t_batch.view(b, 1, 1, 1, 1).expand(b, c, 2, h, w)
-        true_v = ds_dt(t_expanded_full) * (x_target - x1)
+        if parametrization == "standard":
+            # True velocity v = ds/dt * (x0 - x1)
+            t_expanded_full = t_batch.view(b, 1, 1, 1, 1).expand(b, c, 2, h, w)
+            target = ds_dt(t_expanded_full) * (x_target - x1)
+        elif parametrization == "endpoint":
+            target = x_target
+        else:
+            raise ValueError(f"Unknown parametrization: {parametrization}")
+
 
     # Model input: concatenate context and x_t
     model_input = torch.cat([x_context, x_t], dim=2)  # (B, C, 6, H, W)
 
     context_info = batch["spatial_position"]
-    context_global = torch.cat([context_info, t_batch.unsqueeze(1)], dim=1)
+    context_global = torch.cat([context_info, logsnr_t.squeeze()[:, [0]] / 10.], dim=1)
 
-    # Predict velocity
-    predicted_v = model(model_input.float(), context_global.float())
+    # Predict residual
+    prediction = model(model_input.float(), context_global.float())[:, :, 4:, :, :]
 
-    # Loss: MSE between predicted and true velocity
-    loss = torch.nn.functional.mse_loss(predicted_v[mask_data], true_v[mask_data])
+    # Loss: MSE between predicted and true residual
+    loss = torch.nn.functional.mse_loss(prediction[mask_data], target[mask_data])
 
     return loss
 
@@ -174,7 +178,7 @@ def full_image_generation(model, batch, x_context, steps=100, device="cuda", par
         x_context: Context frames.
         steps: Number of ODE steps.
         device: Device to run on.
-        parametrization: Type of parametrization ("standard" or "residual").
+        parametrization: Type of parametrization ("standard" or "endpoint").
 
     Returns:
         Generated images.
@@ -199,20 +203,38 @@ def full_image_generation(model, batch, x_context, steps=100, device="cuda", par
             t_val = 1 - i * dt
             t_next_val = 1 - (i + 1) * dt
             t_batch = torch.full((batch_size,), t_val, device=device)
-            t_next_batch = torch.full((batch_size,), t_next_val, device=device)
 
-            context_global = torch.cat([context_info, t_batch.unsqueeze(1)], dim=1)
+            s_t, logsnr_t = get_proper_noise(COEF_NOISE, t_batch)
+            t_expanded_full = t_batch.view(batch_size, 1, 1, 1, 1).expand(batch_size, nb_channel, 2, h, w)
+            derivative = ds_dt(t_expanded_full)
+
+            t_next_batch = torch.full((batch_size,), t_next_val, device=device)
+            s_t, logsnr_t_next = get_proper_noise(COEF_NOISE, t_batch)
+
+            context_global = torch.cat([context_info, logsnr_t.unsqueeze(-1)[: , [0]]/ 10. ], dim=1)
 
             model_input = torch.cat([x_context, x_t], dim=2)
-            v1 = model(model_input.float(), context_global.float())
+            pred = model(model_input.float(), context_global.float())[:, :, 4:, :, :]
+
+            if parametrization == "endpoint":
+                # For endpoint, prediction is residual, velocity v = pred / t_batch
+                v1 = - derivative * (pred - x_t) / (s_t.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1) + 1e-6)
+            else:
+                # For standard, prediction is velocity
+                v1 = pred
 
             # Euler prediction for Heun's
             x_euler = x_t - dt * v1
 
-            # Predict v at next t with Euler prediction
-            context_global_next = torch.cat([context_info, t_next_batch.unsqueeze(1)], dim=1)
+            # Predict at next t with Euler prediction
+            context_global_next = torch.cat([context_info, logsnr_t_next.unsqueeze(-1)[: , [0]]/ 10.], dim=1)
             model_input_next = torch.cat([x_context, x_euler], dim=2)
-            v2 = model(model_input_next.float(), context_global_next.float())
+            pred_next = model(model_input_next.float(), context_global_next.float())[:, :, 4:, :, :]
+
+            if parametrization == "endpoint":
+                v2 = pred_next / t_next_batch.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+            else:
+                v2 = pred_next
 
             # Heun's step: x_{t-dt} = x_t - (dt/2) * (v1 + v2)
             x_t = x_t - (dt / 2) * (v1 + v2)
@@ -220,9 +242,9 @@ def full_image_generation(model, batch, x_context, steps=100, device="cuda", par
             # Clamp to prevent divergence
             x_t = x_t.clamp(-7, 7)
 
-    if parametrization == "residual":
-        last_context = x_context[:, :, 3:4]  # (batch_size, nb_channel, 1, h, w)
-        x_t = x_t + last_context.expand(-1, -1, 2, -1, -1)
+    # Always add back the last context since always forecasting residual
+    last_context = x_context[:, :, 3:4]  # (batch_size, nb_channel, 1, h, w)
+    x_t = x_t + last_context.expand(-1, -1, 2, -1, -1)
 
     model.train()
     return x_t.cpu()

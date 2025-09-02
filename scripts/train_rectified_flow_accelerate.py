@@ -49,7 +49,7 @@ def main():
     LOG_EVERY_N_STEPS = 5
     SAVE_EVERY_N_EPOCHS = 5
     MODEL_DIR = "models/"
-    PARAMETRIZATION = "residual"
+    PARAMETRIZATION = "standard"
     batch_size = 64
     learning_rate = 5e-4
     num_epochs = 200

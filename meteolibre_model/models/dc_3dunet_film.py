@@ -67,8 +67,8 @@ class ResNetBlock3D(nn.Module):
         self.conv1 = nn.Conv3d(
             in_channels,
             out_channels,
-            kernel_size=(1, 3, 3),
-            padding=(0, 1, 1),
+            kernel_size=(3, 3, 3),
+            padding=(1, 1, 1),
             bias=False,
         )
         self.bn1 = nn.Identity() #nn.InstanceNorm3d(out_channels, affine=True)
@@ -76,11 +76,11 @@ class ResNetBlock3D(nn.Module):
         self.conv2 = nn.Conv3d(
             out_channels,
             out_channels,
-            kernel_size=(1, 3, 3),
-            padding=(0, 1, 1),
+            kernel_size=(3, 3, 3),
+            padding=(1, 1, 1),
             bias=False,
         )
-        self.bn2 = nn.Identity() #nn.InstanceNorm3d(out_channels, affine=True)
+        self.bn2 = nn.InstanceNorm3d(out_channels, affine=True)
 
         self.film = FilmLayer(embedding_dim, out_channels)
 
@@ -88,7 +88,7 @@ class ResNetBlock3D(nn.Module):
         if in_channels != out_channels:
             self.shortcut = nn.Sequential(
                 nn.Conv3d(in_channels, out_channels, kernel_size=1, bias=False),
-                nn.Identity() #nn.InstanceNorm3d(out_channels, affine=True),
+                nn.InstanceNorm3d(out_channels, affine=True),
             )
 
     def forward(self, x: torch.Tensor, context: torch.Tensor) -> torch.Tensor:
@@ -177,11 +177,8 @@ class UNet_DCAE_3D(nn.Module):
             self.additional_resnet_blocks.append(blocks)
 
         # --- Final Output Layer ---
-        input_depth = self.context_frames + 2
-        output_depth = 2
-        kernel_depth = input_depth - output_depth + 1
         self.final_conv = nn.Conv3d(
-            features[0], out_channels, kernel_size=(kernel_depth, 1, 1)
+            features[0], out_channels, kernel_size=(1, 1, 1)
         )
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
@@ -248,10 +245,11 @@ if __name__ == "__main__":
     model = UNet_DCAE_3D(
         in_channels=IN_CHANNELS,
         out_channels=OUT_CHANNELS,
-        features=[32, 64, 128],
+        features=[64, 128, 256],
         context_dim=CONTEXT_DIM,
         embedding_dim=128,
         context_frames=CONTEXT_FRAMES,
+        num_additional_resnet_blocks=3
     )
 
     # Perform a forward pass
@@ -260,7 +258,7 @@ if __name__ == "__main__":
     print(f"Output shape: {output_tensor.shape}")
 
     # Verify the output shape is as expected
-    expected_shape = (BATCH_SIZE, OUT_CHANNELS, 2, IMG_HEIGHT, IMG_WIDTH)
+    expected_shape = (BATCH_SIZE, OUT_CHANNELS, IMG_DEPTH, IMG_HEIGHT, IMG_WIDTH)
     assert output_tensor.shape == expected_shape, (
         f"Shape mismatch! Expected {expected_shape}, got {output_tensor.shape}"
     )
