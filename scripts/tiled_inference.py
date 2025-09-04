@@ -181,17 +181,17 @@ def tiled_inference(
     # The context would be separate. If the context is also provided initially at small size,
     # then it needs to be upsampled or processed in a tiled manner as well.
     # For now, let's create a *dummy high-res initial_context*
-    
+
     # Create the high res context (B, C, 4, H_big, W_big)
     dummy_high_res_context = torch.randn(1, nb_channels, 4, H_big, W_big, device=device)
     # Normailize this dummy context as well
     dummy_high_res_context = normalize_func(dummy_high_res_context, device)
 
     last_context_frame = dummy_high_res_context[:, :, 3:4] # (1, C, 1, H_big, W_big)
-    
+
     # Expand it to match the 2-frame generated output
     last_context_frame_expanded = last_context_frame.expand(-1, -1, 2, -1, -1)
-    
+
     x_t_full_res = x_t_full_res + last_context_frame_expanded
 
     model.train()
@@ -205,7 +205,7 @@ def main():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="/home/adrienbufort/Documents/workspace/meteolibre_model/models/epoch_11.safetensors",
+        default="meteolibre_model/models/epoch_136_rectified_flow.safetensors",
         help="Path to the pre-trained model .safetensors file.",
     )
     parser.add_argument(
@@ -221,10 +221,16 @@ def main():
         help="Number of autoregressive forecast steps to generate (total frames).",
     )
     parser.add_argument(
-        "--target_H", type=int, default=2500, help="Target height for the large image."
+        "--target_H", type=int, default=2540, help="Target height for the large image."
     )
     parser.add_argument(
-        "--target_W", type=int, default=3000, help="Target width for the large image."
+        "--target_W", type=int, default=4132, help="Target width for the large image."
+    )
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default="../data_inference/full_arrays",
+        help="Directory containing the .npy files for initial context.",
     )
     parser.add_argument(
         "--patch_size", type=int, default=128, help="Size of patches trained on (e.g., 128 for 128x128)."
@@ -251,7 +257,7 @@ def main():
         "--model_features",
         nargs="+",
         type=int,
-        default=[32, 64, 128, 256], #[64, 128, 256],
+        default=[64, 128, 256], #[64, 128, 256],
         help="List of feature counts for the U-Net architecture.",
     )
     parser.add_argument(
@@ -310,16 +316,22 @@ def main():
     model.to(args.device)
 
     # --- Autoregressive Generation Loop ---
-    
-    # Initial context (first 4 frames) for the *large image*
-    # For now, generate random data for simplicity. In a real application,
-    # you would load your actual initial observations (e.g., 4 frames of 3000x2500 data)
-    # and normalize them.
-    # Shape: (B, C, T_ctx, H_big, W_big) -> (1, args.model_channels, 4, args.target_H, args.target_W)
-    current_high_res_context = torch.randn(
-        1, args.model_channels, args.context_frames, args.target_H, args.target_W, device=args.device
-    )
-    current_high_res_context = normalize(current_high_res_context, args.device) # Normalize initial true data
+
+    # Load initial context from data
+    data_files = sorted([f for f in os.listdir(args.data_dir) if f.endswith('.npy')])
+    if len(data_files) < args.context_frames:
+        raise ValueError(f"Not enough data files in {args.data_dir}. Need at least {args.context_frames}, found {len(data_files)}")
+
+    initial_frames = []
+    for i in range(args.context_frames):
+        file_path = os.path.join(args.data_dir, data_files[i])
+        frame = np.load(file_path)  # Shape: (1, C, H, W)
+        initial_frames.append(frame)
+
+    # Stack along time dimension: (1, C, T, H, W)
+    current_high_res_context = np.stack(initial_frames, axis=2)
+    current_high_res_context = torch.from_numpy(current_high_res_context).float().to(args.device)
+    current_high_res_context = normalize(current_high_res_context, args.device)  # Normalize initial true data
 
     # Store all generated frames
     all_generated_frames = [current_high_res_context.cpu()] # Store initial context

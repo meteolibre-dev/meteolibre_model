@@ -168,7 +168,7 @@ def trainer_step(model, batch, device, parametrization="standard"):
 
     return loss
 
-def full_image_generation(model, batch, x_context, steps=100, device="cuda", parametrization="standard"):
+def full_image_generation(model, batch, x_context, steps=200, device="cuda", parametrization="standard"):
     """
     Generates full images using rectified flow ODE solver.
 

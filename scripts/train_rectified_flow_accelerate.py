@@ -88,7 +88,7 @@ def main():
         features=[64, 128, 256],
         context_dim=4,
         context_frames=4,
-        num_additional_resnet_blocks=3
+        num_additional_resnet_blocks=2
     )
 
     # Initialize optimizer
