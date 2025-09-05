@@ -4,7 +4,6 @@ This module provides functions for training and generation using rectified flow.
 """
 
 import torch
-import einops
 import math
 
 from meteolibre_model.diffusion.utils import MEAN_CHANNEL, STD_CHANNEL
@@ -13,58 +12,49 @@ from meteolibre_model.diffusion.utils import MEAN_CHANNEL, STD_CHANNEL
 CLIP_MIN = -4
 COEF_NOISE = 3
 
+
 def log(t, eps=1e-20):
     return torch.log(t.clamp(min=eps))
 
-def logsnr_schedule_cosine(t, logsnr_min=-15, logsnr_max=15):
 
+def logsnr_schedule_cosine(t, logsnr_min=-15, logsnr_max=15):
     t_min = math.atan(math.exp(-0.5 * logsnr_max))
     t_max = math.atan(math.exp(-0.5 * logsnr_min))
     return -2 * log(torch.tan(t_min + t * (t_max - t_min)))
 
-def logsnr_schedule_cosine_shifted(coef, t):
 
+def logsnr_schedule_cosine_shifted(coef, t):
     logsnr_t = logsnr_schedule_cosine(t)
     return logsnr_t + 2 * math.log(coef)
 
-def get_proper_noise(coef, t):
 
-    t_shift = 1. - t
+def get_proper_noise(coef, t):
+    t_shift = 1.0 - t
 
     logsnr_t = logsnr_schedule_cosine_shifted(coef, t_shift)
     beta_t = torch.sqrt(torch.sigmoid(logsnr_t))
 
-    return 1. - beta_t, logsnr_t
-
+    return 1.0 - beta_t, logsnr_t
 
 
 def get_logsnr(coef, t):
     return logsnr_schedule_cosine_shifted(coef, t).clamp(min=-15, max=15)
+
 
 def normalize(batch_data, device):
     """
     Normalize the batch data using precomputed mean and std.
     """
     batch_data = (
-        (
-            batch_data
-            - MEAN_CHANNEL.unsqueeze(0)
-            .unsqueeze(-1)
-            .unsqueeze(-1)
-            .unsqueeze(-1)
-            .to(device)
-        )
-        / STD_CHANNEL.unsqueeze(0)
-        .unsqueeze(-1)
-        .unsqueeze(-1)
-        .unsqueeze(-1)
-        .to(device)
-    )
+        batch_data
+        - MEAN_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
+    ) / STD_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
 
     # Clamp to prevent extreme values
     batch_data = batch_data.clamp(CLIP_MIN, 4)
 
     return batch_data
+
 
 def get_x_t(x0, x1, t):
     """
@@ -74,13 +64,14 @@ def get_x_t(x0, x1, t):
 
     return s_t * x0 + (1 - s_t) * x1, logsnr_t
 
+
 def ds_dt(t):
     """
     Computes the derivative of s(t) = 1 - beta_t where beta_t is derived from a shifted cosine schedule.
     s(t) = 1 - sqrt(sigmoid(logsnr_schedule_cosine_shifted(3, 1-t)))
     """
-    t_clamped = torch.clamp(t, min=1e-6, max=1-1e-6)
-    t_shift = 1. - t_clamped
+    t_clamped = torch.clamp(t, min=1e-6, max=1 - 1e-6)
+    t_shift = 1.0 - t_clamped
 
     # Recompute intermediate values from get_proper_noise
     logsnr_t = logsnr_schedule_cosine_shifted(COEF_NOISE, t_shift)
@@ -94,7 +85,12 @@ def ds_dt(t):
     t_min = math.atan(math.exp(-0.5 * 15))
     t_max = math.atan(math.exp(-0.5 * -15))
     tan_val = torch.tan(t_min + t_shift * (t_max - t_min))
-    d_logsnr = -2 * (t_max - t_min) / tan_val * (1 / torch.cos(t_min + t_shift * (t_max - t_min)))**2
+    d_logsnr = (
+        -2
+        * (t_max - t_min)
+        / tan_val
+        * (1 / torch.cos(t_min + t_shift * (t_max - t_min))) ** 2
+    )
 
     # Chain rule for ds/dt
     # ds/dt = d(1-beta_t)/dt = -d(beta_t)/dt
@@ -103,6 +99,7 @@ def ds_dt(t):
     d_beta_dt = (0.5 / sqrt_sigmoid_logsnr_t) * d_sigmoid * d_logsnr * (-1)
 
     return -d_beta_dt
+
 
 def trainer_step(model, batch, device, parametrization="standard"):
     """
@@ -153,12 +150,11 @@ def trainer_step(model, batch, device, parametrization="standard"):
         else:
             raise ValueError(f"Unknown parametrization: {parametrization}")
 
-
     # Model input: concatenate context and x_t
     model_input = torch.cat([x_context, x_t], dim=2)  # (B, C, 6, H, W)
 
     context_info = batch["spatial_position"]
-    context_global = torch.cat([context_info, logsnr_t.squeeze()[:, [0]] / 10.], dim=1)
+    context_global = torch.cat([context_info, logsnr_t.squeeze()[:, [0]] / 10.0], dim=1)
 
     # Predict residual
     prediction = model(model_input.float(), context_global.float())[:, :, 4:, :, :]
@@ -168,7 +164,10 @@ def trainer_step(model, batch, device, parametrization="standard"):
 
     return loss
 
-def full_image_generation(model, batch, x_context, steps=200, device="cuda", parametrization="standard"):
+
+def full_image_generation(
+    model, batch, x_context, steps=200, device="cuda", parametrization="standard"
+):
     """
     Generates full images using rectified flow ODE solver.
 
@@ -205,20 +204,31 @@ def full_image_generation(model, batch, x_context, steps=200, device="cuda", par
             t_batch = torch.full((batch_size,), t_val, device=device)
 
             s_t, logsnr_t = get_proper_noise(COEF_NOISE, t_batch)
-            t_expanded_full = t_batch.view(batch_size, 1, 1, 1, 1).expand(batch_size, nb_channel, 2, h, w)
+            t_expanded_full = t_batch.view(batch_size, 1, 1, 1, 1).expand(
+                batch_size, nb_channel, 2, h, w
+            )
             derivative = ds_dt(t_expanded_full)
 
             t_next_batch = torch.full((batch_size,), t_next_val, device=device)
             s_t, logsnr_t_next = get_proper_noise(COEF_NOISE, t_batch)
 
-            context_global = torch.cat([context_info, logsnr_t.unsqueeze(-1)[: , [0]]/ 10. ], dim=1)
+            context_global = torch.cat(
+                [context_info, logsnr_t.unsqueeze(-1)[:, [0]] / 10.0], dim=1
+            )
 
             model_input = torch.cat([x_context, x_t], dim=2)
             pred = model(model_input.float(), context_global.float())[:, :, 4:, :, :]
 
             if parametrization == "endpoint":
                 # For endpoint, prediction is residual, velocity v = pred / t_batch
-                v1 = - derivative * (pred - x_t) / (s_t.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1) + 1e-6)
+                v1 = (
+                    -derivative
+                    * (pred - x_t)
+                    / (
+                        s_t.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+                        + 1e-6
+                    )
+                )
             else:
                 # For standard, prediction is velocity
                 v1 = pred
@@ -227,12 +237,18 @@ def full_image_generation(model, batch, x_context, steps=200, device="cuda", par
             x_euler = x_t - dt * v1
 
             # Predict at next t with Euler prediction
-            context_global_next = torch.cat([context_info, logsnr_t_next.unsqueeze(-1)[: , [0]]/ 10.], dim=1)
+            context_global_next = torch.cat(
+                [context_info, logsnr_t_next.unsqueeze(-1)[:, [0]] / 10.0], dim=1
+            )
             model_input_next = torch.cat([x_context, x_euler], dim=2)
-            pred_next = model(model_input_next.float(), context_global_next.float())[:, :, 4:, :, :]
+            pred_next = model(model_input_next.float(), context_global_next.float())[
+                :, :, 4:, :, :
+            ]
 
             if parametrization == "endpoint":
-                v2 = pred_next / t_next_batch.unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1)
+                v2 = pred_next / t_next_batch.unsqueeze(-1).unsqueeze(-1).unsqueeze(
+                    -1
+                ).unsqueeze(-1)
             else:
                 v2 = pred_next
 

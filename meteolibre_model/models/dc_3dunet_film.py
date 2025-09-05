@@ -59,7 +59,11 @@ class ResNetBlock3D(nn.Module):
     """
 
     def __init__(
-        self, in_channels: int, out_channels: int, embedding_dim: int, context_frames: int
+        self,
+        in_channels: int,
+        out_channels: int,
+        embedding_dim: int,
+        context_frames: int,
     ):
         super().__init__()
         self.context_frames = context_frames
@@ -71,7 +75,7 @@ class ResNetBlock3D(nn.Module):
             padding=(1, 1, 1),
             bias=False,
         )
-        self.bn1 = nn.Identity() #nn.InstanceNorm3d(out_channels, affine=True)
+        self.bn1 = nn.Identity()  # nn.InstanceNorm3d(out_channels, affine=True)
         self.relu = nn.ReLU(inplace=True)
         self.conv2 = nn.Conv3d(
             out_channels,
@@ -177,9 +181,7 @@ class UNet_DCAE_3D(nn.Module):
             self.additional_resnet_blocks.append(blocks)
 
         # --- Final Output Layer ---
-        self.final_conv = nn.Conv3d(
-            features[0], out_channels, kernel_size=(1, 1, 1)
-        )
+        self.final_conv = nn.Conv3d(features[0], out_channels, kernel_size=(1, 1, 1))
 
     def forward(self, x: torch.Tensor, t: torch.Tensor) -> torch.Tensor:
         time_val = t[:, -1]
@@ -191,7 +193,6 @@ class UNet_DCAE_3D(nn.Module):
 
         # --- Encoder Path ---
         for i in range(len(self.features)):
-
             x = self.encoder_convs[i](x, context)
             skip_connections.append(x)
             x = self.downs[i](x)
@@ -202,8 +203,7 @@ class UNet_DCAE_3D(nn.Module):
         # --- Decoder Path ---
         skip_connections = skip_connections[::-1]
         for i in range(len(self.decoder_convs)):
-
-            x = F.interpolate(x, scale_factor=(1, 2, 2), mode='nearest')
+            x = F.interpolate(x, scale_factor=(1, 2, 2), mode="nearest")
             skip_connection = skip_connections[i]
 
             if x.shape != skip_connection.shape:
@@ -249,7 +249,7 @@ if __name__ == "__main__":
         context_dim=CONTEXT_DIM,
         embedding_dim=128,
         context_frames=CONTEXT_FRAMES,
-        num_additional_resnet_blocks=3
+        num_additional_resnet_blocks=3,
     )
 
     # Perform a forward pass

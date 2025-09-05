@@ -101,7 +101,7 @@ def full_image_generation(model, x_context, steps=10, device="cuda", solver="eul
     elif solver == "rk4":
         for i in range(steps):
             t_n = i * dt
-            
+
             k1 = get_velocity(x_t, t_n)
             k2 = get_velocity(x_t + dt * k1 / 2, t_n + dt / 2)
             k3 = get_velocity(x_t + dt * k2 / 2, t_n + dt / 2)

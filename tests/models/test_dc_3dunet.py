@@ -7,6 +7,7 @@ from meteolibre_model.models.dc_3dunet import (
     UNet_DCAE_3D,
 )
 
+
 class TestDC3DUNet(unittest.TestCase):
     def test_downsample_block(self):
         in_channels = 16
@@ -40,6 +41,7 @@ class TestDC3DUNet(unittest.TestCase):
         input_tensor = torch.randn(1, in_channels, 16, 128, 128)
         output_tensor = model(input_tensor)
         self.assertEqual(output_tensor.shape, (1, out_channels, 16, 128, 128))
+
 
 if __name__ == "__main__":
     unittest.main()

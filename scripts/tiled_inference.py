@@ -1,6 +1,5 @@
 import torch
 import numpy as np
-import einops
 import argparse
 from tqdm import tqdm
 import os
@@ -10,7 +9,7 @@ from suncalc import get_position
 import pyproj
 
 # Add project root to sys.path
-project_root = os.path.abspath("/home/adrienbufort/Documents/workspace/meteolibre_model/")
+project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
 
 # Constants for EPSG 27700 coordinates
@@ -19,204 +18,223 @@ Y_LOW, Y_HIGH = 594000, 3134000
 
 from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
 from meteolibre_model.diffusion.rectified_flow import (
-    full_image_generation as rectified_flow_generate,
     normalize,
     COEF_NOISE,
     get_proper_noise,
-    ds_dt,
 )
 from safetensors.torch import load_file
 
+
 def _extract_patch(image, x, y, patch_size):
     return image[..., y : y + patch_size, x : x + patch_size]
+
 
 def _place_patch(full_image, patch, x, y, patch_size):
     full_image[..., y : y + patch_size, x : x + patch_size] = patch
     return full_image
 
+
+@torch.no_grad()
 def tiled_inference(
     model,
-    initial_context, # (B, C, 4, H_small, W_small)
-    big_image_dims, # (H_big, W_big)
-    patch_size, # H_small or W_small
-    overlap,
+    initial_context,  # (B, C, 4, H_big, W_big)
+    patch_size,
     steps,
     device,
     date,
     parametrization="standard",
     nb_channels=12,
     normalize_func=normalize,
+    batch_size=256,
 ):
     model.eval()
     model.to(device)
 
-    # Initial context (first 4 frames) should be resized to the big image dimensions
-    # For now, let's assume it's just repeated or upsampled. In a real scenario, you'd
-    # have a way to obtain this context at high resolution.
-    # For this exercise, we'll create a dummy high-res context by repeating the small one.
-    # This needs to be adapted based on how you get your actual initial context.
-    _, C, T_ctx, H_small, W_small = initial_context.shape
-    H_big, W_big = big_image_dims
+    _, C, T_ctx, H_big, W_big = initial_context.shape
 
     # Transformer for coordinate conversion
     transformer = pyproj.Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
 
-    # Simple upsampling for context - replace with a proper method if available
-    # Or, if context is also tiled, it would be handled differently.
-    # For now, let's assume `initial_context` is already high-res or upsampled within this function
-    # if it's coming from a small patch.
-    # For simplicity, let's just make it a noisy large image. The user wants to start with a noisy 3000x2500 image
+    x_t_full_res = torch.randn(1, nb_channels, 2, H_big, W_big, device=device)
 
-    # Initialize x_t (noisy image) for the full large image
-    # (B, C, 2, H_big, W_big)
-    x_t_full_res = torch.randn(1, nb_channels, 2, H_big, W_big, device=device) # Start with noise for the target 2 frames
+    # Create two grids of patches
+    # Grid 1: Standard grid
+    y_starts1 = list(range(0, H_big - patch_size + 1, patch_size))
+    if (H_big - patch_size) % patch_size != 0:
+        y_starts1.append(H_big - patch_size)
+    x_starts1 = list(range(0, W_big - patch_size + 1, patch_size))
+    if (W_big - patch_size) % patch_size != 0:
+        x_starts1.append(W_big - patch_size)
+    patch_coords1 = [(x, y) for y in y_starts1 for x in x_starts1]
 
-    overlap_pixels = int(patch_size * overlap)
-    stride = patch_size - overlap_pixels
-    
-    # Ensure stride is at least 1 to avoid infinite loops or no progression
-    if stride <= 0:
-        raise ValueError("Overlap is too large, resulting in non-positive stride. Adjust patch_size or overlap.")
+    # Grid 2: Shifted grid
+    shift = patch_size // 2
+    y_starts2 = list(range(shift, H_big - patch_size + 1, patch_size))
+    if (H_big - patch_size - shift) % patch_size != 0 and H_big - patch_size > shift:
+        y_starts2.append(H_big - patch_size)
+    x_starts2 = list(range(shift, W_big - patch_size + 1, patch_size))
+    if (W_big - patch_size - shift) % patch_size != 0 and W_big - patch_size > shift:
+        x_starts2.append(W_big - patch_size)
+    patch_coords2 = [(x, y) for y in y_starts2 for x in x_starts2]
 
-    # Calculate sampling grid dynamically to cover the full image
-    y_starts = list(range(0, H_big - patch_size + 1, stride))
-    if (H_big - patch_size) % stride != 0:
-        y_starts.append(H_big - patch_size) # Ensure last patch covers the bottom edge
-    
-    x_starts = list(range(0, W_big - patch_size + 1, stride))
-    if (W_big - patch_size) % stride != 0:
-        x_starts.append(W_big - patch_size) # Ensure last patch covers the right edge
-
+    patch_coords = patch_coords1 + patch_coords2
     dt = 1.0 / steps
 
     for i in tqdm(range(steps), desc="Tiled Denoising"):
         t_val = 1 - i * dt
         t_next_val = 1 - (i + 1) * dt
-        t_batch_val = torch.full((1,), t_val, device=device) # (1,)
-        t_next_batch_val = torch.full((1,), t_next_val, device=device) # (1,)
+        t_batch_val = torch.full((1,), t_val, device=device)
+        t_next_batch_val = torch.full((1,), t_next_val, device=device)
 
         s_t, logsnr_t = get_proper_noise(COEF_NOISE, t_batch_val)
         s_t_next, logsnr_t_next = get_proper_noise(COEF_NOISE, t_next_batch_val)
 
-        t_expanded_full = t_batch_val.view(1, 1, 1, 1, 1).expand(1, nb_channels, 2, patch_size, patch_size)
-        derivative = ds_dt(t_expanded_full) # Derivative assumes a specific shape, needs to be flexible
-
         aggregated_velocity = torch.zeros_like(x_t_full_res, device=device)
         overlap_counts = torch.zeros_like(x_t_full_res, device=device)
 
-        for y_start in y_starts:
-            for x_start in x_starts:
-                # Extract patch from the current full noisy image
-                patch_x_t = _extract_patch(x_t_full_res, x_start, y_start, patch_size)
+        with torch.no_grad():
+            for i_batch in range(0, len(patch_coords), batch_size):
+                coords_batch = patch_coords[i_batch : i_batch + batch_size]
 
-                # Compute longitude and latitude for the patch center
-                center_x = x_start + patch_size // 2
-                center_y = y_start + patch_size // 2
-                easting = X_LOW + center_x * 1000
-                northing = Y_HIGH - center_y * 1000
-                lon, lat = transformer.transform(easting, northing)
-                result = get_position(date, lon, lat)
-                spatial_position = torch.tensor([result["azimuth"], result["altitude"], lat/10.], device=device)
+                patch_x_t_batch, patch_context_batch, context_global_batch = [], [], []
 
-                # Assume initial_context is the context for all patches for this step
-                # In a real scenario, initial_context might also be tiled or derived per patch
-                # For autoregressive part, initial_context will be the *last 4 actual forecast frames*
-                # For now, we take the initial_context provided (which is fixed here)
+                eastings = [
+                    X_LOW + (x + patch_size // 2) * 1000 for x, y in coords_batch
+                ]
+                northings = [
+                    Y_HIGH - (y + patch_size // 2) * 1000 for x, y in coords_batch
+                ]
+                lons, lats = transformer.transform(eastings, northings)
 
-                # --- Prepare context_global for the model ---
-                # context_info: (1, 3)
-                # logsnr_t: (1,)
-                # We need context_global of shape (1, 4)
-                context_global = torch.cat([spatial_position.unsqueeze(0), logsnr_t.unsqueeze(-1) / 10.], dim=1) # (1, 4)
+                for j, (x_start, y_start) in enumerate(coords_batch):
+                    patch_x_t = _extract_patch(
+                        x_t_full_res, x_start, y_start, patch_size
+                    )
+                    patch_context = _extract_patch(
+                        initial_context, x_start, y_start, patch_size
+                    )
 
-                # Model input: concatenate context and x_t patch
-                # x_context: (1, C, 4, patch_size, patch_size)
-                # patch_x_t: (1, C, 2, patch_size, patch_size)
-                model_input = torch.cat([initial_context, patch_x_t], dim=2) # (1, C, 6, patch_size, patch_size)
-                
-                # Predict velocity (v-prediction)
-                pred_patch = model(model_input.float(), context_global.float())[:, :, 4:, :, :] # (1, C, 2, patch_size, patch_size)
+                    result = get_position(date, lons[j], lats[j])
+                    spatial_position = torch.tensor(
+                        [result["azimuth"], result["altitude"], lats[j] / 10.0],
+                        device=device,
+                    )
+                    context_global = torch.cat(
+                        [spatial_position.unsqueeze(0), logsnr_t.unsqueeze(-1) / 10.0],
+                        dim=1,
+                    )
 
+                    patch_x_t_batch.append(patch_x_t)
+                    patch_context_batch.append(patch_context)
+                    context_global_batch.append(context_global)
 
-                v_patch = pred_patch
-                
-                aggregated_velocity[..., y_start : y_start + patch_size, x_start : x_start + patch_size] += v_patch
-                overlap_counts[..., y_start : y_start + patch_size, x_start : x_start + patch_size] += 1
+                model_input = torch.cat(
+                    [
+                        torch.cat(patch_context_batch, dim=0),
+                        torch.cat(patch_x_t_batch, dim=0),
+                    ],
+                    dim=2,
+                )
+                pred_batch = model(
+                    model_input.float(), torch.cat(context_global_batch, dim=0).float()
+                )[:, :, 4:, :, :]
 
-        # Average overlapping velocities
-        # Avoid division by zero for non-covered regions (though with proper tiling this shouldn't happen)
-        overlap_counts[overlap_counts == 0] = 1 
+                for j, (x_start, y_start) in enumerate(coords_batch):
+                    aggregated_velocity[
+                        ...,
+                        y_start : y_start + patch_size,
+                        x_start : x_start + patch_size,
+                    ] += pred_batch[j : j + 1]
+                    overlap_counts[
+                        ...,
+                        y_start : y_start + patch_size,
+                        x_start : x_start + patch_size,
+                    ] += 1
+
+        overlap_counts[overlap_counts == 0] = 1
         averaged_velocity = aggregated_velocity / overlap_counts
-
-        # Euler prediction for Heun's
         x_euler = x_t_full_res - dt * averaged_velocity
 
-        # Heun's method for next step - requires predicting at t_next_val and x_euler
-        # This part assumes that the model can still produce an endpoint prediction
-        # based on an estimated x_euler,
-        # For simplicity, we'll re-run patches with x_euler to get pred_next_patch
-        # and then combine for v2. This is computationally expensive but conceptually direct.
-        
         aggregated_pred_next = torch.zeros_like(x_t_full_res, device=device)
+        with torch.no_grad():
+            for i_batch in range(0, len(patch_coords), batch_size):
+                coords_batch = patch_coords[i_batch : i_batch + batch_size]
 
-        for y_start in y_starts:
-            for x_start in x_starts:
-                # Compute longitude and latitude for the patch center (same as above)
-                center_x = x_start + patch_size // 2
-                center_y = y_start + patch_size // 2
-                easting = X_LOW + center_x * 1000
-                northing = Y_HIGH - center_y * 1000
-                lon, lat = transformer.transform(easting, northing)
-                result = get_position(date, lon, lat)
-                spatial_position = torch.tensor([result["azimuth"], result["altitude"], lat/10.], device=device)
+                patch_x_euler_batch, patch_context_batch, context_global_next_batch = (
+                    [],
+                    [],
+                    [],
+                )
 
-                context_global_next = torch.cat([spatial_position.unsqueeze(0), logsnr_t_next.unsqueeze(-1) / 10.], dim=1) # (1, 4)
+                eastings = [
+                    X_LOW + (x + patch_size // 2) * 1000 for x, y in coords_batch
+                ]
+                northings = [
+                    Y_HIGH - (y + patch_size // 2) * 1000 for x, y in coords_batch
+                ]
+                lons, lats = transformer.transform(eastings, northings)
 
-                patch_x_euler = _extract_patch(x_euler, x_start, y_start, patch_size)
-                model_input_next_patch = torch.cat([initial_context, patch_x_euler], dim=2)
-                pred_next_patch = model(model_input_next_patch.float(), context_global_next.float())[:, :, 4:, :, :]
-                aggregated_pred_next[..., y_start : y_start + patch_size, x_start : x_start + patch_size] += pred_next_patch
+                for j, (x_start, y_start) in enumerate(coords_batch):
+                    patch_x_euler = _extract_patch(
+                        x_euler, x_start, y_start, patch_size
+                    )
+                    patch_context = _extract_patch(
+                        initial_context, x_start, y_start, patch_size
+                    )
 
-        averaged_pred_next = aggregated_pred_next / overlap_counts # Reuse overlap_counts
+                    result = get_position(date, lons[j], lats[j])
+                    spatial_position = torch.tensor(
+                        [result["azimuth"], result["altitude"], lats[j] / 10.0],
+                        device=device,
+                    )
+                    context_global_next = torch.cat(
+                        [
+                            spatial_position.unsqueeze(0),
+                            logsnr_t_next.unsqueeze(-1) / 10.0,
+                        ],
+                        dim=1,
+                    )
 
+                    patch_x_euler_batch.append(patch_x_euler)
+                    patch_context_batch.append(patch_context)
+                    context_global_next_batch.append(context_global_next)
+
+                model_input_next = torch.cat(
+                    [
+                        torch.cat(patch_context_batch, dim=0),
+                        torch.cat(patch_x_euler_batch, dim=0),
+                    ],
+                    dim=2,
+                )
+                pred_next_batch = model(
+                    model_input_next.float(),
+                    torch.cat(context_global_next_batch, dim=0).float(),
+                )[:, :, 4:, :, :]
+
+                for j, (x_start, y_start) in enumerate(coords_batch):
+                    aggregated_pred_next[
+                        ...,
+                        y_start : y_start + patch_size,
+                        x_start : x_start + patch_size,
+                    ] += pred_next_batch[j : j + 1]
+
+        averaged_pred_next = aggregated_pred_next / overlap_counts
         v2 = averaged_pred_next
-
-        # Heun's step: x_{t-dt} = x_t - (dt/2) * (v1 + v2)
         x_t_full_res = x_t_full_res - (dt / 2) * (averaged_velocity + v2)
-        x_t_full_res = x_t_full_res.clamp(-7, 7) # Clamp to prevent divergence
-
+        x_t_full_res = x_t_full_res.clamp(-7, 7)
     # Always add back the last context since always forecasting residual
     # Assuming initial_context is already normalized and the model expects residual.
-    # The initial_context is (B, C, 4, H_small, W_small). 
+    # The initial_context is (B, C, 4, H_small, W_small).
     # The last frame of context is initial_context[:, :, 3:4].
     # This needs to be upsampled to H_big, W_big if initial_context itself is small.
-    # If initial_context is truly the context for the *entire* large image, 
-    # then initial_context[:, :, 3:4] needs to be (1, nb_channels, 1, H_big, W_big).
-
-    # For this script, let's assume `initial_context` is already large, 
-    # matching `H_big, W_big` for its spatial dimensions,
-    # and has been provided correctly in the first place or upscaled before calling `tiled_inference`.
-    # Let's adjust `initial_context` to reflect it is already upsampled for the first part of the script.
-    
-    # We need to construct a proper initial_context (B, C, 4, H_big, W_big)
-    # The user states: "initially generate a noisy 3000x2500 image" meaning the target.
-    # The context would be separate. If the context is also provided initially at small size,
-    # then it needs to be upsampled or processed in a tiled manner as well.
-    # For now, let's create a *dummy high-res initial_context*
-
-    # Create the high res context (B, C, 4, H_big, W_big)
-    dummy_high_res_context = torch.randn(1, nb_channels, 4, H_big, W_big, device=device)
-    # Normailize this dummy context as well
-    dummy_high_res_context = normalize_func(dummy_high_res_context, device)
-
-    last_context_frame = dummy_high_res_context[:, :, 3:4] # (1, C, 1, H_big, W_big)
+    # The last frame of context is initial_context[:, :, 3:4], which is (1, C, 1, H_big, W_big).
+    last_context_frame = initial_context[:, :, 3:4]
 
     # Expand it to match the 2-frame generated output
     last_context_frame_expanded = last_context_frame.expand(-1, -1, 2, -1, -1)
 
     x_t_full_res = x_t_full_res + last_context_frame_expanded
 
-    model.train()
     return x_t_full_res.cpu()
 
 
@@ -227,7 +245,7 @@ def main():
     parser.add_argument(
         "--model_path",
         type=str,
-        default="meteolibre_model/models/epoch_136_rectified_flow.safetensors",
+        default="models/epoch_146_rectified_flow.safetensors",
         help="Path to the pre-trained model .safetensors file.",
     )
     parser.add_argument(
@@ -239,7 +257,7 @@ def main():
     parser.add_argument(
         "--forecast_steps",
         type=int,
-        default=60,
+        default=12,
         help="Number of autoregressive forecast steps to generate (total frames).",
     )
     parser.add_argument(
@@ -251,22 +269,19 @@ def main():
     parser.add_argument(
         "--data_dir",
         type=str,
-        default="../data_inference/full_arrays",
+        default="../data_inference/2025081108",
         help="Directory containing the .npy files for initial context.",
     )
     parser.add_argument(
-        "--patch_size", type=int, default=128, help="Size of patches trained on (e.g., 128 for 128x128)."
-    )
-    parser.add_argument(
-        "--overlap_ratio",
-        type=float,
-        default=0.25,
-        help="Overlap ratio between patches (e.g., 0.25 for 25% overlap).",
+        "--patch_size",
+        type=int,
+        default=128,
+        help="Size of patches trained on (e.g., 128 for 128x128).",
     )
     parser.add_argument(
         "--denoising_steps",
         type=int,
-        default=100,
+        default=50,
         help="Number of denoising steps for each tiled diffusion process.",
     )
     parser.add_argument(
@@ -277,10 +292,21 @@ def main():
     )
     parser.add_argument(
         "--model_features",
-        nargs="+",
-        type=int,
-        default=[64, 128, 256], #[64, 128, 256],
+        default=[64, 128, 256],  # ,
         help="List of feature counts for the U-Net architecture.",
+    )
+    parser.add_argument(
+        "--num_additional_resnet_blocks",
+        type=int,
+        default=2,
+        help="number of additional resnet block.",
+    )
+
+    parser.add_argument(
+        "--batch_size",
+        type=int,
+        default=64,
+        help="Batch size for processing patches during inference.",
     )
     parser.add_argument(
         "--context_dim",
@@ -325,27 +351,32 @@ def main():
         context_dim=args.context_dim,
         embedding_dim=args.embedding_dim,
         context_frames=args.context_frames,
+        num_additional_resnet_blocks=2,
     )
-    
+
     # Load model weights
     if os.path.exists(args.model_path):
         loaded_state_dict = load_file(args.model_path)
         model.load_state_dict(loaded_state_dict)
         print(f"Loaded model weights from {args.model_path}")
     else:
-        print(f"Warning: Model weights not found at {args.model_path}. Using randomly initialized model.")
+        print(
+            f"Warning: Model weights not found at {args.model_path}. Using randomly initialized model."
+        )
 
     model.to(args.device)
 
     # Set initial date for predictions (pick a summer date for sun position)
-    initial_date = datetime(2025, 6, 15, 12, 0)
+    initial_date = datetime(2025, 8, 10, 8, 0)
 
     # --- Autoregressive Generation Loop ---
 
     # Load initial context from data
-    data_files = sorted([f for f in os.listdir(args.data_dir) if f.endswith('.npy')])
+    data_files = sorted([f for f in os.listdir(args.data_dir) if f.endswith(".npy")])
     if len(data_files) < args.context_frames:
-        raise ValueError(f"Not enough data files in {args.data_dir}. Need at least {args.context_frames}, found {len(data_files)}")
+        raise ValueError(
+            f"Not enough data files in {args.data_dir}. Need at least {args.context_frames}, found {len(data_files)}"
+        )
 
     initial_frames = []
     for i in range(args.context_frames):
@@ -355,11 +386,12 @@ def main():
 
     # Stack along time dimension: (1, C, T, H, W)
     current_high_res_context = np.stack(initial_frames, axis=2)
-    current_high_res_context = torch.from_numpy(current_high_res_context).float().to(args.device)
-    current_high_res_context = normalize(current_high_res_context, args.device)  # Normalize initial true data
-
-    # Store all generated frames
-    all_generated_frames = [current_high_res_context.cpu()] # Store initial context
+    current_high_res_context = (
+        torch.from_numpy(current_high_res_context).float().to(args.device)
+    )
+    current_high_res_context = normalize(
+        current_high_res_context, args.device
+    )  # Normalize initial true data
 
     # Each step of autoregressive generation predicts 2 frames.
     # We need to run (forecast_steps / 2) iterations.
@@ -375,38 +407,45 @@ def main():
         generated_two_frames = tiled_inference(
             model=model,
             initial_context=current_high_res_context,
-            big_image_dims=(args.target_H, args.target_W),
             patch_size=args.patch_size,
-            overlap=args.overlap_ratio,
             steps=args.denoising_steps,
             device=args.device,
             date=prediction_date,
             parametrization=args.parametrization,
             nb_channels=args.model_channels,
             normalize_func=normalize,
-        ) # Shape: (1, C, 2, H_big, W_big)
-        
-        all_generated_frames.append(generated_two_frames.cpu())
+            batch_size=args.batch_size,
+        )  # Shape: (1, C, 2, H_big, W_big)
+
+        # Save each of the two generated frames independently
+        frame1 = generated_two_frames[:, :, 0, :, :]
+        frame2 = generated_two_frames[:, :, 1, :, :]
+
+        date1 = prediction_date
+        date2 = prediction_date + timedelta(minutes=10)
+
+        filename1 = f"forecast_{date1.strftime('%Y%m%d%H%M')}.npz"
+        output_filepath1 = os.path.join(args.output_dir, filename1)
+        np.savez_compressed(output_filepath1, forecast=frame1.squeeze(0).numpy())
+        print(f"Saved forecast to {output_filepath1}")
+
+        filename2 = f"forecast_{date2.strftime('%Y%m%d%H%M')}.npz"
+        output_filepath2 = os.path.join(args.output_dir, filename2)
+        np.savez_compressed(output_filepath2, forecast=frame2.squeeze(0).numpy())
+        print(f"Saved forecast to {output_filepath2}")
 
         # Update current_high_res_context for the next autoregressive step
         # Shift the context: remove the oldest 2 frames, add the newly generated 2 frames
         current_high_res_context = torch.cat(
-            [current_high_res_context[:, :, 2:, :, :], generated_two_frames.to(args.device)], dim=2
-        ) # (1, C, 4, H_big, W_big)
+            [
+                current_high_res_context[:, :, 2:, :, :],
+                generated_two_frames.to(args.device),
+            ],
+            dim=2,
+        )  # (1, C, 4, H_big, W_big)
 
         # Optional: Save intermediate forecast or visualize (e.g., save every 10 steps)
         # For simplicity, we'll save the final full forecast.
-    
-    # Concatenate all generated frames into a single tensor
-    # The first item in all_generated_frames has 4 frames, subsequent have 2.
-    final_forecast = torch.cat(all_generated_frames, dim=2) # (1, C, 4 + forecast_steps, H_big, W_big)
-
-    # Example: Save the first channel of the first (and only) batch item to a numpy file
-    # for visualization or further processing.
-    # Or, save each frame as an image if visualization is needed directly here.
-    output_filepath = os.path.join(args.output_dir, "full_forecast.npy")
-    np.save(output_filepath, final_forecast.squeeze(0).numpy())
-    print(f"Full forecast saved to {output_filepath}")
 
     print("Tiled diffusion and autoregressive forecasting complete.")
 

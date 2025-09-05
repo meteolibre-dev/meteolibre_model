@@ -7,22 +7,27 @@ from typing import List
 # == 3D DC-AE Blocks
 # ==============================================================================
 
+
 class DCAE_DownsampleBlock3D(nn.Module):
     """
     3D DC-AE Downsample Block.
     Downsamples spatial dimensions (H, W) by 2x, doubles channels, and keeps depth (D) intact.
     """
+
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
         if out_channels != 2 * in_channels:
-            print(f"Warning: out_channels ({out_channels}) is not double the in_channels ({in_channels}).")
+            print(
+                f"Warning: out_channels ({out_channels}) is not double the in_channels ({in_channels})."
+            )
 
         # Main path: 3D strided convolution, only striding on H and W
         self.conv = nn.Conv3d(
-            in_channels, out_channels,
+            in_channels,
+            out_channels,
             kernel_size=(1, 3, 3),
             stride=(1, 2, 2),
-            padding=(0, 1, 1)
+            padding=(0, 1, 1),
         )
 
     def _shortcut(self, x: torch.Tensor) -> torch.Tensor:
@@ -38,30 +43,35 @@ class DCAE_DownsampleBlock3D(nn.Module):
 
         # Channel Averaging
         c_new = s2c.shape[1]
-        group1 = s2c[:, :c_new//2, :, :, :]
-        group2 = s2c[:, c_new//2:, :, :, :]
+        group1 = s2c[:, : c_new // 2, :, :, :]
+        group2 = s2c[:, c_new // 2 :, :, :, :]
         return (group1 + group2) / 2
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass for the 3D downsampling block."""
         return self.conv(x) + self._shortcut(x)
 
+
 class DCAE_UpsampleBlock3D(nn.Module):
     """
     3D DC-AE Upsample Block.
     Upsamples spatial dimensions (H, W) by 2x, halves channels, and keeps depth (D) intact.
     """
+
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
         if out_channels != in_channels // 2:
-             print(f"Warning: out_channels ({out_channels}) is not half the in_channels ({in_channels}).")
+            print(
+                f"Warning: out_channels ({out_channels}) is not half the in_channels ({in_channels})."
+            )
 
         # Main path: 3D transposed convolution, only upsampling H and W
         self.conv_transpose = nn.ConvTranspose3d(
-            in_channels, out_channels,
+            in_channels,
+            out_channels,
             kernel_size=(1, 2, 2),
             stride=(1, 2, 2),
-            padding=0
+            padding=0,
         )
 
     def _shortcut(self, x: torch.Tensor) -> torch.Tensor:
@@ -82,24 +92,39 @@ class DCAE_UpsampleBlock3D(nn.Module):
         """Forward pass for the 3D upsampling block."""
         return self.conv_transpose(x) + self._shortcut(x)
 
+
 # ==============================================================================
 # == 3D U-Net Components
 # ==============================================================================
+
 
 class ResNetBlock3D(nn.Module):
     """
     A 3D ResNet block with two (1, 3, 3) convolutions and a skip connection.
     """
+
     def __init__(self, in_channels: int, out_channels: int):
         super().__init__()
 
         # Main path of the ResNet block
         self.main_path = nn.Sequential(
-            nn.Conv3d(in_channels, out_channels, kernel_size=(1, 3, 3), padding=(0, 1, 1), bias=False),
+            nn.Conv3d(
+                in_channels,
+                out_channels,
+                kernel_size=(1, 3, 3),
+                padding=(0, 1, 1),
+                bias=False,
+            ),
             nn.BatchNorm3d(out_channels),
             nn.ReLU(inplace=True),
-            nn.Conv3d(out_channels, out_channels, kernel_size=(1, 3, 3), padding=(0, 1, 1), bias=False),
-            nn.BatchNorm3d(out_channels)
+            nn.Conv3d(
+                out_channels,
+                out_channels,
+                kernel_size=(1, 3, 3),
+                padding=(0, 1, 1),
+                bias=False,
+            ),
+            nn.BatchNorm3d(out_channels),
         )
 
         # Shortcut connection to match dimensions if necessary
@@ -107,13 +132,14 @@ class ResNetBlock3D(nn.Module):
         if in_channels != out_channels:
             self.shortcut = nn.Sequential(
                 nn.Conv3d(in_channels, out_channels, kernel_size=1, bias=False),
-                nn.BatchNorm3d(out_channels)
+                nn.BatchNorm3d(out_channels),
             )
 
         self.final_relu = nn.ReLU(inplace=True)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.final_relu(self.main_path(x) + self.shortcut(x))
+
 
 # ==============================================================================
 # == Full 3D U-Net Architecture
@@ -122,9 +148,15 @@ class UNet_DCAE_3D(nn.Module):
     """
     A 3D U-Net architecture that only performs spatial down/up-sampling.
     """
-    def __init__(self, in_channels: int = 1, out_channels: int = 1, features: List[int] = [32, 64, 128, 256]):
+
+    def __init__(
+        self,
+        in_channels: int = 1,
+        out_channels: int = 1,
+        features: List[int] = [32, 64, 128, 256],
+    ):
         super().__init__()
-        self.features = features # Your correct addition!
+        self.features = features  # Your correct addition!
         self.encoder_convs = nn.ModuleList()
         self.decoder_convs = nn.ModuleList()
         self.downs = nn.ModuleList()
@@ -135,13 +167,14 @@ class UNet_DCAE_3D(nn.Module):
         for feature in features:
             self.encoder_convs.append(ResNetBlock3D(current_channels, feature))
             self.downs.append(DCAE_DownsampleBlock3D(feature, feature * 2))
-            current_channels = feature * 2 # CORRECTED: Update channels for the *next* block
+            current_channels = (
+                feature * 2
+            )  # CORRECTED: Update channels for the *next* block
 
         # --- Bottleneck ---
         # CORRECTED: The bottleneck input channels must match the last downsampler's output
         bottleneck_channels = features[-1] * 2
         self.bottleneck = ResNetBlock3D(bottleneck_channels, bottleneck_channels)
-
 
         # --- Decoder (Upsampling Path) ---
         for feature in reversed(features):
@@ -160,7 +193,7 @@ class UNet_DCAE_3D(nn.Module):
             x = self.encoder_convs[i](x)
             skip_connections.append(x)
             x = self.downs[i](x)
-        
+
         # --- Bottleneck ---
         x = self.bottleneck(x)
 
@@ -180,23 +213,28 @@ class UNet_DCAE_3D(nn.Module):
 
         return self.final_conv(x)
 
+
 # --- Example Usage ---
-if __name__ == '__main__':
+if __name__ == "__main__":
     print("--- Testing Full 3D U-Net with DC-AE and ResNet Blocks ---")
 
     # Define model parameters
     IMG_DEPTH, IMG_HEIGHT, IMG_WIDTH = 16, 128, 128
     IN_CHANNELS = 1
-    OUT_CHANNELS = 1 # For binary segmentation
+    OUT_CHANNELS = 1  # For binary segmentation
     BATCH_SIZE = 2
 
     # Create a random input tensor (N, C, D, H, W)
-    input_tensor = torch.randn(BATCH_SIZE, IN_CHANNELS, IMG_DEPTH, IMG_HEIGHT, IMG_WIDTH)
+    input_tensor = torch.randn(
+        BATCH_SIZE, IN_CHANNELS, IMG_DEPTH, IMG_HEIGHT, IMG_WIDTH
+    )
     print(f"Input shape: {input_tensor.shape}")
 
     # Initialize the model
     # Note: I adjusted the features list slightly for a more typical U-Net progression
-    model = UNet_DCAE_3D(in_channels=IN_CHANNELS, out_channels=OUT_CHANNELS, features=[32, 64, 128, 256])
+    model = UNet_DCAE_3D(
+        in_channels=IN_CHANNELS, out_channels=OUT_CHANNELS, features=[32, 64, 128, 256]
+    )
 
     # Perform a forward pass
     output_tensor = model(input_tensor)
@@ -205,7 +243,9 @@ if __name__ == '__main__':
 
     # Verify the output shape is as expected
     expected_shape = (BATCH_SIZE, OUT_CHANNELS, IMG_DEPTH, IMG_HEIGHT, IMG_WIDTH)
-    assert output_tensor.shape == expected_shape, f"Shape mismatch! Expected {expected_shape}, got {output_tensor.shape}"
+    assert output_tensor.shape == expected_shape, (
+        f"Shape mismatch! Expected {expected_shape}, got {output_tensor.shape}"
+    )
 
     print("✅ 3D U-Net model shape test PASSED.")
 

@@ -1,4 +1,3 @@
-
 import torch
 
 MEAN_CHANNEL = torch.tensor(

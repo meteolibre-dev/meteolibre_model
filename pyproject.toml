@@ -19,6 +19,7 @@ dependencies = [
     "torch-dct>=0.1.6",
     "einops>=0.8.1",
     "matplotlib",
+    "pyproj>=3.7.1",
 ]
 
 [tool.setuptools]

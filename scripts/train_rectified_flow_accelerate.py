@@ -6,18 +6,16 @@ This script trains a rectified flow model using the MeteoLibreMapDataset and UNe
 import sys
 import os
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader
 from torchvision.utils import make_grid
 from accelerate import Accelerator
-from accelerate.utils import set_seed, ProjectConfiguration, LoggerType
+from accelerate.utils import set_seed
 from tqdm.auto import tqdm
-import random
 from datetime import datetime
 
 
 from accelerate.utils import DistributedDataParallelKwargs
-from safetensors.torch import save_file, load_file
+from safetensors.torch import save_file
 
 # Add project root to sys.path
 project_root = os.path.abspath("/workspace/meteolibre_model/")
@@ -88,7 +86,7 @@ def main():
         features=[64, 128, 256],
         context_dim=4,
         context_frames=4,
-        num_additional_resnet_blocks=2
+        num_additional_resnet_blocks=2,
     )
 
     # Initialize optimizer
@@ -152,14 +150,18 @@ def main():
 
                 unwrapped_model = accelerator.unwrap_model(model)
                 generated_images = full_image_generation(
-                    unwrapped_model, batch, x_context, device=accelerator.device, parametrization=PARAMETRIZATION
+                    unwrapped_model,
+                    batch,
+                    x_context,
+                    device=accelerator.device,
+                    parametrization=PARAMETRIZATION,
                 )
 
                 # Select one channel and one batch item for visualization
                 generated_sample = generated_images[0, -1]  # Shape: (2, H, W)
                 target_sample = x_target[0, -1].cpu()  # Shape: (2, H, W)
 
-                all_frames = torch.cat([generated_sample, target_sample], dim=0) / 8.
+                all_frames = torch.cat([generated_sample, target_sample], dim=0) / 8.0
                 all_frames = all_frames.clamp(-10, 10)
 
                 grid = make_grid(all_frames.unsqueeze(1), nrow=2)
@@ -172,8 +174,9 @@ def main():
                 tb_tracker = accelerator.get_tracker("tensorboard")
                 if tb_tracker:
                     tb_tracker.writer.add_image("Generated vs Target", grid, epoch)
-                    tb_tracker.writer.add_image("Generated vs Target (normalized)", grid_normalized, epoch)
-
+                    tb_tracker.writer.add_image(
+                        "Generated vs Target (normalized)", grid_normalized, epoch
+                    )
 
         # This part for saving the model was already correct
         if (epoch) % SAVE_EVERY_N_EPOCHS == 0:
