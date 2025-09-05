@@ -5,10 +5,17 @@ import argparse
 from tqdm import tqdm
 import os
 import sys
+from datetime import datetime, timedelta
+from suncalc import get_position
+import pyproj
 
 # Add project root to sys.path
 project_root = os.path.abspath("/home/adrienbufort/Documents/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
+
+# Constants for EPSG 27700 coordinates
+X_LOW, X_HIGH = 2907000, 7039000
+Y_LOW, Y_HIGH = 594000, 3134000
 
 from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
 from meteolibre_model.diffusion.rectified_flow import (
@@ -35,6 +42,7 @@ def tiled_inference(
     overlap,
     steps,
     device,
+    date,
     parametrization="standard",
     nb_channels=12,
     normalize_func=normalize,
@@ -49,7 +57,10 @@ def tiled_inference(
     # This needs to be adapted based on how you get your actual initial context.
     _, C, T_ctx, H_small, W_small = initial_context.shape
     H_big, W_big = big_image_dims
-    
+
+    # Transformer for coordinate conversion
+    transformer = pyproj.Transformer.from_crs("EPSG:27700", "EPSG:4326", always_xy=True)
+
     # Simple upsampling for context - replace with a proper method if available
     # Or, if context is also tiled, it would be handled differently.
     # For now, let's assume `initial_context` is already high-res or upsampled within this function
@@ -59,13 +70,6 @@ def tiled_inference(
     # Initialize x_t (noisy image) for the full large image
     # (B, C, 2, H_big, W_big)
     x_t_full_res = torch.randn(1, nb_channels, 2, H_big, W_big, device=device) # Start with noise for the target 2 frames
-
-    # Create dummy spatial_position for the full image, assuming a constant value for now
-    # This needs to be carefully handled in a real-world scenario, as spatial_position
-    # might vary across the large image. For simplicity, we'll use a placeholder.
-    # The original context_info has a spatial_position of shape (1, 3).
-    # We will use a dummy one for now.
-    dummy_spatial_position = torch.tensor([[0.0, 0.0, 0.0]], device=device) # (1, 3)
 
     overlap_pixels = int(patch_size * overlap)
     stride = patch_size - overlap_pixels
@@ -104,17 +108,26 @@ def tiled_inference(
             for x_start in x_starts:
                 # Extract patch from the current full noisy image
                 patch_x_t = _extract_patch(x_t_full_res, x_start, y_start, patch_size)
-                
+
+                # Compute longitude and latitude for the patch center
+                center_x = x_start + patch_size // 2
+                center_y = y_start + patch_size // 2
+                easting = X_LOW + center_x * 1000
+                northing = Y_HIGH - center_y * 1000
+                lon, lat = transformer.transform(easting, northing)
+                result = get_position(date, lon, lat)
+                spatial_position = torch.tensor([result["azimuth"], result["altitude"], lat/10.], device=device)
+
                 # Assume initial_context is the context for all patches for this step
                 # In a real scenario, initial_context might also be tiled or derived per patch
                 # For autoregressive part, initial_context will be the *last 4 actual forecast frames*
                 # For now, we take the initial_context provided (which is fixed here)
-                
+
                 # --- Prepare context_global for the model ---
                 # context_info: (1, 3)
                 # logsnr_t: (1,)
                 # We need context_global of shape (1, 4)
-                context_global = torch.cat([dummy_spatial_position, logsnr_t.unsqueeze(-1) / 10.], dim=1) # (1, 4)
+                context_global = torch.cat([spatial_position.unsqueeze(0), logsnr_t.unsqueeze(-1) / 10.], dim=1) # (1, 4)
 
                 # Model input: concatenate context and x_t patch
                 # x_context: (1, C, 4, patch_size, patch_size)
@@ -145,11 +158,20 @@ def tiled_inference(
         # and then combine for v2. This is computationally expensive but conceptually direct.
         
         aggregated_pred_next = torch.zeros_like(x_t_full_res, device=device)
-        
-        context_global_next = torch.cat([dummy_spatial_position, logsnr_t_next.unsqueeze(-1) / 10.], dim=1) # (1, 4)
 
         for y_start in y_starts:
             for x_start in x_starts:
+                # Compute longitude and latitude for the patch center (same as above)
+                center_x = x_start + patch_size // 2
+                center_y = y_start + patch_size // 2
+                easting = X_LOW + center_x * 1000
+                northing = Y_HIGH - center_y * 1000
+                lon, lat = transformer.transform(easting, northing)
+                result = get_position(date, lon, lat)
+                spatial_position = torch.tensor([result["azimuth"], result["altitude"], lat/10.], device=device)
+
+                context_global_next = torch.cat([spatial_position.unsqueeze(0), logsnr_t_next.unsqueeze(-1) / 10.], dim=1) # (1, 4)
+
                 patch_x_euler = _extract_patch(x_euler, x_start, y_start, patch_size)
                 model_input_next_patch = torch.cat([initial_context, patch_x_euler], dim=2)
                 pred_next_patch = model(model_input_next_patch.float(), context_global_next.float())[:, :, 4:, :, :]
@@ -315,6 +337,9 @@ def main():
 
     model.to(args.device)
 
+    # Set initial date for predictions (pick a summer date for sun position)
+    initial_date = datetime(2025, 6, 15, 12, 0)
+
     # --- Autoregressive Generation Loop ---
 
     # Load initial context from data
@@ -341,6 +366,9 @@ def main():
     for step_idx in range(args.forecast_steps // 2):
         print(f"Autoregressive step {step_idx + 1}/{args.forecast_steps // 2}")
 
+        # Compute the date for the predicted frames
+        prediction_date = initial_date + timedelta(minutes=10 * (step_idx * 2 + 1))
+
         # Perform tiled inference for the next 2 frames
         # The `initial_context` for `tiled_inference` is now `current_high_res_context`
         # which acts as the fixed conditioning input for predicting the *next 2 frames*.
@@ -352,6 +380,7 @@ def main():
             overlap=args.overlap_ratio,
             steps=args.denoising_steps,
             device=args.device,
+            date=prediction_date,
             parametrization=args.parametrization,
             nb_channels=args.model_channels,
             normalize_func=normalize,
