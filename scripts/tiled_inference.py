@@ -351,7 +351,7 @@ def main():
         context_dim=args.context_dim,
         embedding_dim=args.embedding_dim,
         context_frames=args.context_frames,
-        num_additional_resnet_blocks=2,
+        num_additional_resnet_blocks=args.num_additional_resnet_blocks,
     )
 
     # Load model weights
@@ -367,7 +367,7 @@ def main():
     model.to(args.device)
 
     # Set initial date for predictions (pick a summer date for sun position)
-    initial_date = datetime(2025, 8, 10, 8, 0)
+    initial_date = datetime(2025, 8, 11, 8, 0)
 
     # --- Autoregressive Generation Loop ---
 
