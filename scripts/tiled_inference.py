@@ -281,7 +281,7 @@ def main():
     parser.add_argument(
         "--denoising_steps",
         type=int,
-        default=50,
+        default=100,
         help="Number of denoising steps for each tiled diffusion process.",
     )
     parser.add_argument(

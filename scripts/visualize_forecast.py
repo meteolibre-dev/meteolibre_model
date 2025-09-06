@@ -74,11 +74,11 @@ def create_gif(forecast_dir, ground_truth_dir, output_dir, forecast_steps, nb_ch
 
             # Generate a side-by-side comparison image
             fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-            axes[0].imshow(forecast_channel_data, cmap='viridis', vmin=vmin, vmax=vmax)
+            axes[0].imshow(forecast_channel_data, cmap='plasma', vmin=vmin, vmax=vmax)
             axes[0].set_title(f'Forecast - Channel {channel} - {current_date}')
             axes[0].axis('off')
             
-            axes[1].imshow(ground_truth_channel_data, cmap='viridis', vmin=vmin, vmax=vmax)
+            axes[1].imshow(ground_truth_channel_data, cmap='plasma', vmin=vmin, vmax=vmax)
             axes[1].set_title(f'Ground Truth - Channel {channel} - {current_date}')
             axes[1].axis('off')
 
