@@ -1,3 +1,6 @@
+
+![channel_3_comparison](https://github.com/user-attachments/assets/bf4fca7d-8218-4be8-9efa-4d0b092496e8)
+
 # MeteoLibre Model
 
 ## Overview
