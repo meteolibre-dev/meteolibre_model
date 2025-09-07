@@ -24,8 +24,8 @@ sys.path.insert(0, project_root)
 
 from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
 from meteolibre_model.diffusion.rectified_flow_rolling import (
-    trainer_step_rolling,
-    solve_ode_for_window,
+    trainer_step,
+    full_image_generation,
     normalize,
 )
 from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
@@ -83,7 +83,7 @@ def main():
     model = UNet_DCAE_3D(
         in_channels=12,  # Adjust based on your data
         out_channels=12,  # Adjust based on your data
-        features=[64, 128, 256],
+        features=[64, 128, 256, 512],
         context_dim=4,
         context_frames=4,
         num_additional_resnet_blocks=2,
@@ -110,7 +110,7 @@ def main():
         for batch in progress_bar:
             # Perform training step
             with accelerator.accumulate(model):
-                loss = trainer_step_rolling(model, batch, device, PARAMETRIZATION)
+                loss = trainer_step(model, batch, device, PARAMETRIZATION)
                 accelerator.backward(loss)
 
                 # Gradient clipping
@@ -149,7 +149,7 @@ def main():
                 x_target = normalize(x_target, device)
 
                 unwrapped_model = accelerator.unwrap_model(model)
-                generated_images = solve_ode_for_window(
+                generated_images = full_image_generation(
                     unwrapped_model,
                     batch,
                     x_context,
