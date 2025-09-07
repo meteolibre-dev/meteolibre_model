@@ -1,128 +1,102 @@
----
-language: en
-tags:
-- weather-forecasting
-- diffusion-models
-- rectified-flow
-- meteorology
-- pytorch
-- deep-learning
-license: mit
-datasets:
-- meteolibre
----
+# MeteoLibre Model
 
-# MeteoLibre Rectified Flow Model
+## Overview
 
-This is a rectified flow diffusion model trained for meteorological data forecasting using the MeteoLibre dataset. The model uses a 3D U-Net architecture with FiLM conditioning for efficient weather pattern generation.
+MeteoLibre Model is a Python-based machine learning project for weather prediction. It leverages a variety of powerful libraries to process and analyze meteorological data, enabling accurate and reliable forecasting. This project is designed to be modular and extensible, allowing for easy integration of new models and data sources.
 
-## Model Description
+## Features
 
-- **Model type**: Rectified Flow Diffusion Model
-- **Architecture**: 3D DC-AE U-Net with FiLM conditioning
-- **Input**: Meteorological data patches (12 channels, 3D spatio-temporal)
-- **Output**: Generated weather forecast data
-- **Training data**: MeteoLibre meteorological dataset
-- **Language(s)**: Python
-- **License**: MIT
+- **Data Processing:** Utilizes pandas and numpy for efficient data manipulation and preprocessing.
+- **Machine Learning:** Built on PyTorch, a leading deep learning framework, for model training and inference.
+- **Hugging Face Integration:** Seamlessly integrates with the Hugging Face ecosystem for access to datasets and pre-trained models.
+- **Data Visualization:** Includes tools for creating insightful visualizations with matplotlib.
+- **Geospatial Analysis:** Leverages pyproj for handling geospatial data and coordinate transformations.
 
-## Intended Use
+## Model Architecture: 3D U-Net with DC-AE Blocks
 
-This model is designed for:
-- Weather pattern generation and forecasting
-- Meteorological data augmentation
-- Research in atmospheric science and weather prediction
-- Educational purposes in machine learning for climate modeling
+The core model is a **3D U-Net**, implemented in `meteolibre_model/models/dc_3dunet.py`. This architecture is particularly well-suited for tasks involving volumetric or sequential data, where spatial and temporal relationships are important.
 
-## Model Architecture
+- **Architecture:** The model follows a classic U-Net structure with an encoder, a bottleneck, and a decoder.
+- **Downsampling and Upsampling:** Instead of traditional pooling layers, the model uses `DCAE_DownsampleBlock3D` and `DCAE_UpsampleBlock3D` blocks. These blocks perform downsampling and upsampling only on the spatial dimensions (height and width), while keeping the depth dimension intact. This is a key feature for handling meteorological data, where the depth could represent different pressure levels or time steps.
+- **Residual Connections:** The model incorporates `ResNetBlock3D` blocks, which use residual connections to improve gradient flow and allow for deeper networks.
+- **Input and Output:** The model takes a 5D tensor as input, with the shape `(N, C, D, H, W)`, where:
+    - `N` is the batch size.
+    - `C` is the number of input channels (e.g., different weather variables).
+    - `D` is the depth (e.g., time steps or altitude levels).
+    - `H` is the height of the spatial grid.
+    - `W` is the width of the spatial grid.
+The output has the same shape, with the number of channels adjusted to the desired number of output variables.
 
-The model consists of:
-- **UNet_DCAE_3D**: 3D convolutional U-Net with encoder-decoder architecture
-- **FiLM Conditioning**: Feature-wise linear modulation for temporal context
-- **Rectified Flow**: Efficient generative modeling approach
-- **Input channels**: 12 (meteorological variables)
-- **Output channels**: 12 (forecast variables)
-- **Features**: [64, 128, 256] channel progression
-- **Context frames**: 4 (temporal conditioning)
+## Data Handling
 
-## Training
+The data loading is handled by the `MeteoLibreMapDataset` class in `meteolibre_model/dataset/dataset.py`. This class is designed to efficiently load and preprocess data from a collection of Parquet files.
 
-The model was trained using:
-- **Framework**: PyTorch with Hugging Face Accelerate
-- **Optimizer**: Adam (lr=5e-4)
-- **Batch size**: 64
-- **Epochs**: 200
-- **Precision**: Mixed precision (bf16)
-- **Distributed training**: Multi-GPU support
+- **Data Source:** The dataset reads data from a directory of Parquet files located in `{localrepo}/data/`.
+- **Data Loading:** It uses a map-style dataset approach, where each item in the dataset corresponds to a single record in one of the Parquet files.
+- **Shuffling:** The dataset implements a sophisticated shuffling mechanism that shuffles the order of Parquet files for each DataLoader worker. This ensures that each worker is likely to be processing a different file at any given time, which can improve data loading performance and randomness.
+- **Caching:** An in-memory LRU (Least Recently Used) cache is used to store recently accessed DataFrames, reducing the need to read the same files from disk repeatedly.
+- **Preprocessing:** The `_preprocess` method is responsible for taking a raw record from the Parquet file and preparing it for the model. This includes:
+    - Reshaping the raw data into the correct 5D tensor format.
+    - Calculating the sun's position (azimuth and altitude) based on the date, longitude, and latitude of the data patch. This information is then added to the input tensor as additional features.
+
+## Installation
+
+To get started with MeteoLibre Model, clone the repository and install the required dependencies:
+
+```bash
+git clone https://github.com/your-username/meteolibre-model.git
+cd meteolibre-model
+pip install -e .
+```
+
+## Dependencies
+
+The project relies on the following libraries:
+
+- **Core Libraries:**
+  - pandas
+  - numpy
+  - torch
+  - accelerate
+  - tqdm
+  - torchvision
+- **Hugging Face:**
+  - datasets
+  - huggingface-hub
+- **Scientific Computing:**
+  - suncalc
+  - scipy
+  - tensorboard
+  - torch-dct
+  - einops
+- **Visualization:**
+  - matplotlib
+  - imageio
+- **Geospatial:**
+  - pyproj
+
+For a complete list of dependencies, please see the `pyproject.toml` file.
 
 ## Usage
 
-### Loading the Model
+To train a new model, you can use the provided training scripts. For example:
 
-```python
-from safetensors.torch import load_file
-import torch
-from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
-
-# Load model weights
-state_dict = load_file("epoch_141_rectified_flow.safetensors")
-
-# Create model
-model = UNet_DCAE_3D(
-    in_channels=12,
-    out_channels=12,
-    features=[64, 128, 256],
-    context_dim=4,
-    context_frames=4,
-    num_additional_resnet_blocks=2
-)
-
-model.load_state_dict(state_dict)
-model.eval()
+```bash
+python scripts/train.py --config configs/your_config.yaml
 ```
 
-### Inference
+For more detailed instructions on how to use the project, please refer to the documentation.
 
-```python
-# Example inference code
-with torch.no_grad():
-    generated_data = model(input_batch)
-```
+## Contributing
 
-## Performance
+We welcome contributions from the community! If you would like to contribute to the project, please follow these steps:
 
-The model checkpoints are saved at regular intervals:
-- epoch_1_rectified_flow.safetensors through epoch_141_rectified_flow.safetensors
-- Best performing checkpoints available for different training stages
+1. Fork the repository.
+2. Create a new branch for your feature or bug fix.
+3. Make your changes and commit them with a descriptive message.
+4. Push your changes to your fork.
+5. Submit a pull request to the main repository.
 
-## Limitations
+## License
 
-- Model trained on specific meteorological dataset
-- May not generalize to all weather patterns or regions
-- Requires significant computational resources for inference
-- Temporal context limited to 4 frames
-
-## Ethical Considerations
-
-- Weather forecasting models should be used responsibly
-- Consider environmental impact of computational requirements
-- Validate predictions against ground truth data
-- Not intended for critical decision-making without human oversight
-
-## Citation
-
-If you use this model in your research, please cite:
-
-```bibtex
-@misc{meteolibre-rectified-flow,
-  title={MeteoLibre Rectified Flow Weather Forecasting Model},
-  author={MeteoLibre Development Team},
-  year={2025},
-  publisher={Hugging Face},
-  url={https://huggingface.co/meteolibre-dev/meteolibre-rectified-flow}
-}
-```
-
-## Contact
-
-For questions or issues, please open an issue on the [MeteoLibre GitHub repository](https://github.com/meteolibre-dev/meteolibre_model).
+This project is licensed under the MIT License. See the `LICENSE` file for more details.
