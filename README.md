@@ -1,6 +1,9 @@
 
 ![channel_3_comparison](https://github.com/user-attachments/assets/bf4fca7d-8218-4be8-9efa-4d0b092496e8)
 
+1km spatial resolution / 10min temporal resolution on whole europe.
+Trained using https://huggingface.co/datasets/meteolibre-dev/mtg_europe_128_1km
+
 # MeteoLibre Model
 
 ## Overview
