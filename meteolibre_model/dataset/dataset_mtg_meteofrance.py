@@ -119,7 +119,8 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
             kpis = []
             for kpi in temporal:
                 coo = sp.coo_matrix((kpi['data'], (kpi['row'], kpi['col'])), shape=kpi['shape'])
-                dense = coo.toarray()
+                dense = np.full(kpi['shape'], np.nan, dtype=float)
+                dense[kpi['row'], kpi['col']] = kpi['data']
                 kpis.append(dense)
             # stack kpis along axis 0
             temporal_stack = np.stack(kpis, axis=0)  # (7, 128, 128)
