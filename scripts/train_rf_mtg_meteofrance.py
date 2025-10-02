@@ -22,7 +22,7 @@ project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
 
 
-from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
+from meteolibre_model.dataset.dataset_mtg_meteofrance import MeteoLibreMapDataset
 from meteolibre_model.diffusion.rectified_flow import (
     trainer_step,
     full_image_generation,
@@ -65,7 +65,7 @@ def main():
 
     # Initialize dataset
     dataset = MeteoLibreMapDataset(
-        localrepo="/workspace/data/data",  # Replace with your dataset path
+        localrepo="/workspace/dataset",  # Replace with your dataset path
         cache_size=8,
         seed=seed,
     )
@@ -75,7 +75,7 @@ def main():
         dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=4,  # os.cpu_count() // 2,  # Use half the available CPUs
+        #num_workers=1,  # os.cpu_count() // 2,  # Use half the available CPUs
         pin_memory=True,
     )
 
@@ -88,6 +88,11 @@ def main():
         context_frames=4,
         num_additional_resnet_blocks=2,
     )
+
+    for batch in dataloader:
+        break
+    breakpoint()
+
 
     # Initialize optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)

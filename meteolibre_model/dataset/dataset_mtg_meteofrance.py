@@ -10,14 +10,17 @@ import os
 import glob
 from collections import OrderedDict
 import bisect
+import ast
 
 import numpy as np
+import scipy.sparse as sp
 import random
 import pyarrow.parquet as pq
 
 from torch.utils.data import get_worker_info
 import torch
 import torch.distributed as dist
+
 
 from suncalc import get_position
 
@@ -38,11 +41,12 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
                     Each worker's shuffle seed will be `seed + worker_id`.
     """
 
-    def __init__(self, localrepo: str, cache_size: int = 8, seed: int = 42):
+    def __init__(self, localrepo: str, cache_size: int = 8, seed: int = 42, nb_temporal: int = 5):
         super().__init__()
         self.localrepo = localrepo
         self.cache_size = cache_size
         self.seed = seed  # Store base seed
+        self.nb_temporal = nb_temporal
 
         # Find all parquet files. We start with a sorted list for consistency.
         data_path = os.path.join(self.localrepo, "data", "*.parquet")
@@ -104,11 +108,29 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         # ground station data
         ground_station_data = record["sparse_data"]
 
-        breakpoint()
+        # string to variable conversion
+        ground_station_data = ast.literal_eval(ground_station_data)
 
+        # now we can convert all the sparse data into a proper image data
+        # 5 temporal elements (len(ground_station_data) = nb_temporal)
+        # 7 different type of KPI per elements len(ground_station_data[0])
+        processed_ground = []
+        for temporal in ground_station_data:
+            kpis = []
+            for kpi in temporal:
+                coo = sp.coo_matrix((kpi['data'], (kpi['row'], kpi['col'])), shape=kpi['shape'])
+                dense = coo.toarray()
+                kpis.append(dense)
+            # stack kpis along axis 0
+            temporal_stack = np.stack(kpis, axis=0)  # (7, 128, 128)
+            processed_ground.append(temporal_stack)
+        # stack temporals
+        ground_station_data = np.stack(processed_ground, axis=0)  # (5, 7, 128, 128)
+        ground_station_data = torch.from_numpy(ground_station_data)
 
         return {
             "sat_patch_data": sat_patch_data,
+            "ground_station_data": ground_station_data,
             "spatial_position": torch.tensor(
                 [result["azimuth"], result["altitude"], lat / 10.0]
             ),
@@ -156,8 +178,10 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         # get date from file name
         file_path = self.file_paths[file_index]
         filename = os.path.basename(file_path)
-        date_str = filename.split("_")[0]
-        date = datetime.strptime(date_str, "%Y%m%d%H%M%S")
+        date_str = filename.split("_")[:2]
+        date_str = "_".join(date_str)
+
+        date = datetime.strptime(date_str, "%Y-%m-%d_%H-%M-%S")
 
         data_df = self._get_dataframe(file_index)
 
