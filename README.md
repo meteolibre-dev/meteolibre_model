@@ -18,12 +18,12 @@ MeteoLibre Model is a Python-based machine learning project for weather predicti
 - **Data Visualization:** Includes tools for creating insightful visualizations with matplotlib.
 - **Geospatial Analysis:** Leverages pyproj for handling geospatial data and coordinate transformations.
 
-## Model Architecture: 3D U-Net with DC-AE Blocks
+## Model Architecture: 3D U-Net
 
-The core model is a **3D U-Net**, implemented in `meteolibre_model/models/dc_3dunet.py`. This architecture is particularly well-suited for tasks involving volumetric or sequential data, where spatial and temporal relationships are important.
+The core model is a **3D U-Net**, implemented in `meteolibre_model/models/unet3d.py`. This architecture is particularly well-suited for tasks involving volumetric or sequential data, where spatial and temporal relationships are important.
 
 - **Architecture:** The model follows a classic U-Net structure with an encoder, a bottleneck, and a decoder.
-- **Downsampling and Upsampling:** Instead of traditional pooling layers, the model uses `DCAE_DownsampleBlock3D` and `DCAE_UpsampleBlock3D` blocks. These blocks perform downsampling and upsampling only on the spatial dimensions (height and width), while keeping the depth dimension intact. This is a key feature for handling meteorological data, where the depth could represent different pressure levels or time steps.
+- **Downsampling and Upsampling:** Instead of traditional pooling layers, the model uses `DownsampleBlock3D` and `UpsampleBlock3D` blocks. These blocks perform downsampling and upsampling only on the spatial dimensions (height and width), while keeping the depth dimension intact. This is a key feature for handling meteorological data, where the depth could represent different pressure levels or time steps.
 - **Residual Connections:** The model incorporates `ResNetBlock3D` blocks, which use residual connections to improve gradient flow and allow for deeper networks.
 - **Input and Output:** The model takes a 5D tensor as input, with the shape `(N, C, D, H, W)`, where:
     - `N` is the batch size.

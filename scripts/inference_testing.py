@@ -28,7 +28,7 @@ from meteolibre_model.diffusion.blurring_diffusion import (
     full_image_generation,
     BLUR_SIGMA_MAX,
 )
-from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
+from meteolibre_model.models.unet3d_film import UNet3D
 
 
 def main():
@@ -70,7 +70,7 @@ def main():
     )
 
     # Initialize model
-    model = UNet_DCAE_3D(
+    model = UNet3D(
         in_channels=12,  # Adjust based on your data
         out_channels=12,  # Adjust based on your data
         features=[32, 64, 128, 256],

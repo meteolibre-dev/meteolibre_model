@@ -23,12 +23,12 @@ sys.path.insert(0, project_root)
 
 
 from meteolibre_model.dataset.dataset import MeteoLibreMapDataset
-from meteolibre_model.diffusion.rectified_flow_rolling import (
+from meteolibre_model.diffusion.rectified_flow import (
     trainer_step,
     full_image_generation,
     normalize,
 )
-from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
+from meteolibre_model.models.unet3d_film import UNet3D
 
 
 def main():
@@ -80,10 +80,10 @@ def main():
     )
 
     # Initialize model
-    model = UNet_DCAE_3D(
+    model = UNet3D(
         in_channels=12,  # Adjust based on your data
         out_channels=12,  # Adjust based on your data
-        features=[64, 128, 256, 512],
+        features=[64, 128, 256],
         context_dim=4,
         context_frames=4,
         num_additional_resnet_blocks=2,

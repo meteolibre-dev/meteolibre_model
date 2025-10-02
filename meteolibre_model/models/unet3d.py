@@ -4,13 +4,13 @@ import torch.nn.functional as F
 from typing import List
 
 # ==============================================================================
-# == 3D DC-AE Blocks
+# == 3D U-Net Blocks
 # ==============================================================================
 
 
-class DCAE_DownsampleBlock3D(nn.Module):
+class DownsampleBlock3D(nn.Module):
     """
-    3D DC-AE Downsample Block.
+    3D Downsample Block.
     Downsamples spatial dimensions (H, W) by 2x, doubles channels, and keeps depth (D) intact.
     """
 
@@ -52,9 +52,9 @@ class DCAE_DownsampleBlock3D(nn.Module):
         return self.conv(x) + self._shortcut(x)
 
 
-class DCAE_UpsampleBlock3D(nn.Module):
+class UpsampleBlock3D(nn.Module):
     """
-    3D DC-AE Upsample Block.
+    3D Upsample Block.
     Upsamples spatial dimensions (H, W) by 2x, halves channels, and keeps depth (D) intact.
     """
 
@@ -144,7 +144,7 @@ class ResNetBlock3D(nn.Module):
 # ==============================================================================
 # == Full 3D U-Net Architecture
 # ==============================================================================
-class UNet_DCAE_3D(nn.Module):
+class UNet3D(nn.Module):
     """
     A 3D U-Net architecture that only performs spatial down/up-sampling.
     """
@@ -166,7 +166,7 @@ class UNet_DCAE_3D(nn.Module):
         current_channels = in_channels
         for feature in features:
             self.encoder_convs.append(ResNetBlock3D(current_channels, feature))
-            self.downs.append(DCAE_DownsampleBlock3D(feature, feature * 2))
+            self.downs.append(DownsampleBlock3D(feature, feature * 2))
             current_channels = (
                 feature * 2
             )  # CORRECTED: Update channels for the *next* block
@@ -178,7 +178,7 @@ class UNet_DCAE_3D(nn.Module):
 
         # --- Decoder (Upsampling Path) ---
         for feature in reversed(features):
-            self.ups.append(DCAE_UpsampleBlock3D(feature * 2, feature))
+            self.ups.append(UpsampleBlock3D(feature * 2, feature))
             self.decoder_convs.append(ResNetBlock3D(feature * 2, feature))
 
         # --- Final Output Layer ---
@@ -216,7 +216,7 @@ class UNet_DCAE_3D(nn.Module):
 
 # --- Example Usage ---
 if __name__ == "__main__":
-    print("--- Testing Full 3D U-Net with DC-AE and ResNet Blocks ---")
+    print("--- Testing Full 3D U-Net with ResNet Blocks ---")
 
     # Define model parameters
     IMG_DEPTH, IMG_HEIGHT, IMG_WIDTH = 16, 128, 128
@@ -232,7 +232,7 @@ if __name__ == "__main__":
 
     # Initialize the model
     # Note: I adjusted the features list slightly for a more typical U-Net progression
-    model = UNet_DCAE_3D(
+    model = UNet3D(
         in_channels=IN_CHANNELS, out_channels=OUT_CHANNELS, features=[32, 64, 128, 256]
     )
 

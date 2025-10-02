@@ -113,7 +113,7 @@ class ResNetBlock3D(nn.Module):
 # ==============================================================================
 # == Full 3D U-Net Architecture
 # ==============================================================================
-class UNet_DCAE_3D(nn.Module):
+class UNet3D(nn.Module):
     """
     A 3D U-Net architecture that only performs spatial down/up-sampling, with FiLM conditioning.
     """
@@ -221,7 +221,7 @@ class UNet_DCAE_3D(nn.Module):
 # --- Example Usage ---
 if __name__ == "__main__":
     print(
-        "--- Testing Full 3D U-Net with DC-AE, ResNet Blocks, and FiLM conditioning ---"
+        "--- Testing Full 3D U-Net with ResNet Blocks and FiLM conditioning ---"
     )
 
     # Define model parameters
@@ -242,7 +242,7 @@ if __name__ == "__main__":
     print(f"Time shape: {t.shape}")
 
     # Initialize the model
-    model = UNet_DCAE_3D(
+    model = UNet3D(
         in_channels=IN_CHANNELS,
         out_channels=OUT_CHANNELS,
         features=[64, 128, 256],

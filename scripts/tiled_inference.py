@@ -16,7 +16,7 @@ sys.path.insert(0, project_root)
 X_LOW, X_HIGH = 2907000, 7039000
 Y_LOW, Y_HIGH = 594000, 3134000
 
-from meteolibre_model.models.dc_3dunet_film import UNet_DCAE_3D
+from meteolibre_model.models.unet3d_film import UNet3D
 from meteolibre_model.diffusion.rectified_flow import (
     normalize,
     COEF_NOISE,
@@ -344,7 +344,7 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     # Initialize model
-    model = UNet_DCAE_3D(
+    model = UNet3D(
         in_channels=args.model_channels,
         out_channels=args.model_channels,
         features=args.model_features,
