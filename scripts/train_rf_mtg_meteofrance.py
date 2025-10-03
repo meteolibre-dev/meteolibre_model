@@ -85,7 +85,7 @@ def main():
         sat_out_channels=12,
         kpi_out_channels=7,
         additional_channels=10,
-        features=[32, 64, 128],
+        features=[32, 64, 128, 256],
         context_dim=4,
         embedding_dim=128,
         context_frames=4,
@@ -169,8 +169,8 @@ def main():
                 )
 
                 # Select one channel and one batch item for visualization
-                generated_sample = generated_images[0, -1]  # Shape: (1, H, W)
-                target_sample = x_target[0, -1].cpu()  # Shape: (1, H, W)
+                generated_sample = generated_images[0, 11]  # Shape: (1, H, W)
+                target_sample = x_target[0, 11].cpu()  # Shape: (1, H, W)
 
                 all_frames = torch.cat([generated_sample, target_sample], dim=0) / 8.0
                 all_frames = all_frames.clamp(-10, 10)
