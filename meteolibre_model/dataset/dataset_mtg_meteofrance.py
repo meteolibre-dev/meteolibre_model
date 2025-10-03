@@ -109,7 +109,8 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         ground_station_data = record["sparse_data"]
 
         # string to variable conversion
-        ground_station_data = ast.literal_eval(ground_station_data)
+        safe_namespace = {"nan": -10.}
+        ground_station_data = eval(ground_station_data, {"__builtins__": {}}, safe_namespace)
 
         # now we can convert all the sparse data into a proper image data
         # 5 temporal elements (len(ground_station_data) = nb_temporal)
@@ -118,13 +119,16 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         for temporal in ground_station_data:
             kpis = []
             for kpi in temporal:
-                coo = sp.coo_matrix((kpi['data'], (kpi['row'], kpi['col'])), shape=kpi['shape'])
-                dense = np.full(kpi['shape'], np.nan, dtype=float)
+                #coo = sp.coo_matrix((kpi['data'], (kpi['row'], kpi['col'])), shape=kpi['shape'])
+                dense = np.full(kpi['shape'], -10., dtype=float)
                 dense[kpi['row'], kpi['col']] = kpi['data']
                 kpis.append(dense)
             # stack kpis along axis 0
             temporal_stack = np.stack(kpis, axis=0)  # (7, 128, 128)
             processed_ground.append(temporal_stack)
+
+
+
         # stack temporals
         ground_station_data = np.stack(processed_ground, axis=0)  # (5, 7, 128, 128)
         ground_station_data = torch.from_numpy(ground_station_data)
