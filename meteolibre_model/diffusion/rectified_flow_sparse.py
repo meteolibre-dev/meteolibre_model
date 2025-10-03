@@ -133,7 +133,7 @@ def trainer_step(model, batch, device, parametrization="standard"):
         target_kpi[mask_data_kpi[:, :, 4:]].float(),
     )
 
-    return loss_sat + 0.1 * loss_kpi
+    return loss_sat + 0.1 * loss_kpi, loss_sat, loss_kpi
 
 
 def full_image_generation(

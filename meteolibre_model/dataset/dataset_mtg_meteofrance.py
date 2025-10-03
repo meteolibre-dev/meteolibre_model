@@ -139,7 +139,7 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         ground_station_data = torch.from_numpy(ground_station_data)
 
         return {
-            "sat_patch_data": sat_patch_data,
+            "sat_patch_data": torch.from_numpy(sat_patch_data)  ,
             "ground_station_data": ground_station_data,
             "spatial_position": torch.tensor(
                 [result["azimuth"], result["altitude"], lat / 10.0]
@@ -175,6 +175,11 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
                 # Get a random permutation of indices and apply it to the file list
                 perm = torch.randperm(len(self.base_file_paths), generator=g).tolist()
                 self.file_paths = [self.base_file_paths[i] for i in perm]
+
+                # recompute
+                self.records_per_file_list = [self.records_per_file_list[i] for i in perm]
+                self.cumulative_records = np.cumsum([0] + self.records_per_file_list[:-1]).tolist()
+
             self.worker_initialized = True
 
         if index < 0 or index >= self.total_records:

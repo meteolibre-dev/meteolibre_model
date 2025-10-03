@@ -65,7 +65,7 @@ def main():
     # Initialize dataset
     dataset = MeteoLibreMapDataset(
         localrepo="/workspace/dataset",  # Replace with your dataset path
-        cache_size=8,
+        cache_size=4,
         seed=seed,
     )
 
@@ -74,7 +74,7 @@ def main():
         dataset,
         batch_size=batch_size,
         shuffle=False,
-        #num_workers=1,  # os.cpu_count() // 2,  # Use half the available CPUs
+        num_workers=4,  # os.cpu_count() // 2,  # Use half the available CPUs
         pin_memory=True,
     )
 
@@ -84,13 +84,13 @@ def main():
         kpi_in_channels=7,
         sat_out_channels=12,
         kpi_out_channels=7,
-        additional_channels= 10,
-        features = [32, 64, 128],
-        context_dim = 4,
-        embedding_dim = 128,
-        context_frames = 4,
-        num_additional_resnet_blocks = 2,
-        time_emb_dim= 64,
+        additional_channels=10,
+        features=[32, 64, 128],
+        context_dim=4,
+        embedding_dim=128,
+        context_frames=4,
+        num_additional_resnet_blocks=2,
+        time_emb_dim=64,
     )
 
     # Initialize optimizer
@@ -114,7 +114,9 @@ def main():
         for batch in progress_bar:
             # Perform training step
             with accelerator.accumulate(model):
-                loss = trainer_step(model, batch, device, PARAMETRIZATION)
+                loss, loss_sat, loss_kpi = trainer_step(
+                    model, batch, device, PARAMETRIZATION
+                )
                 accelerator.backward(loss)
 
                 # Gradient clipping
@@ -132,9 +134,18 @@ def main():
                             step=global_step,
                         )
 
+                        accelerator.log(
+                            {"Loss_sat/train_trained": loss_sat.item()},
+                            step=global_step,
+                        )
+
+                        accelerator.log(
+                            {"Loss_kpi/train_trained": loss_kpi.item()},
+                            step=global_step,
+                        )
+
                 total_loss += loss.item()
                 progress_bar.set_postfix(loss=loss.item())
-
 
         # Calculate average loss for the epoch
         avg_loss = total_loss / len(dataloader)
@@ -144,12 +155,10 @@ def main():
 
         # Print epoch statistics
         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}")
-        
-        
+
         if accelerator.is_main_process:
             with torch.no_grad():
-
-                #x_target = normalize(x_target, device)
+                # x_target = normalize(x_target, device)
 
                 unwrapped_model = accelerator.unwrap_model(model)
                 generated_images, x_target = full_image_generation(
@@ -179,7 +188,6 @@ def main():
                     tb_tracker.writer.add_image(
                         "Generated vs Target (normalized)", grid_normalized, epoch
                     )
-        
 
         # This part for saving the model was already correct
         if (epoch) % SAVE_EVERY_N_EPOCHS == 0:
