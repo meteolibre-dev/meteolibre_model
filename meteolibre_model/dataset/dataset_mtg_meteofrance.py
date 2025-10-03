@@ -99,6 +99,10 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
             .copy()
         )
 
+        # in case of bad formatting
+        if record["sat_shape"][0] > 5:
+            sat_patch_data = sat_patch_data[-5:, :, :, :]
+
         # now we try to retrieve the longitude latitude of the patch to get the sun orientation on the patches
         long = record["lon"] # longitude
         lat = record["lat"] # latitude
@@ -126,6 +130,9 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
             # stack kpis along axis 0
             temporal_stack = np.stack(kpis, axis=0)  # (7, 128, 128)
             processed_ground.append(temporal_stack)
+
+        if len(processed_ground) > 5:
+            processed_ground = processed_ground[-5:]
 
         # stack temporals
         ground_station_data = np.stack(processed_ground, axis=0)  # (5, 7, 128, 128)

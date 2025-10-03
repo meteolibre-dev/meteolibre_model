@@ -135,6 +135,7 @@ def main():
                 total_loss += loss.item()
                 progress_bar.set_postfix(loss=loss.item())
 
+
         # Calculate average loss for the epoch
         avg_loss = total_loss / len(dataloader)
 
@@ -144,27 +145,23 @@ def main():
         # Print epoch statistics
         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}")
         
-        """
+        
         if accelerator.is_main_process:
             with torch.no_grad():
-                permuted_batch_data = batch["patch_data"].permute(0, 2, 1, 3, 4)
-                x_context = permuted_batch_data[:, :, :4]
-                x_target = permuted_batch_data[:, :, 4:]
 
                 #x_target = normalize(x_target, device)
 
                 unwrapped_model = accelerator.unwrap_model(model)
-                generated_images = full_image_generation(
+                generated_images, x_target = full_image_generation(
                     unwrapped_model,
                     batch,
-                    x_context,
                     device=accelerator.device,
                     parametrization=PARAMETRIZATION,
                 )
 
                 # Select one channel and one batch item for visualization
-                generated_sample = generated_images[0, -1]  # Shape: (2, H, W)
-                target_sample = x_target[0, -1].cpu()  # Shape: (2, H, W)
+                generated_sample = generated_images[0, -1]  # Shape: (1, H, W)
+                target_sample = x_target[0, -1].cpu()  # Shape: (1, H, W)
 
                 all_frames = torch.cat([generated_sample, target_sample], dim=0) / 8.0
                 all_frames = all_frames.clamp(-10, 10)
@@ -182,7 +179,7 @@ def main():
                     tb_tracker.writer.add_image(
                         "Generated vs Target (normalized)", grid_normalized, epoch
                     )
-        """
+        
 
         # This part for saving the model was already correct
         if (epoch) % SAVE_EVERY_N_EPOCHS == 0:
