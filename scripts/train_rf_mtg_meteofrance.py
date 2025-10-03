@@ -23,12 +23,11 @@ sys.path.insert(0, project_root)
 
 
 from meteolibre_model.dataset.dataset_mtg_meteofrance import MeteoLibreMapDataset
-from meteolibre_model.diffusion.rectified_flow import (
+from meteolibre_model.diffusion.rectified_flow_sparse import (
     trainer_step,
     full_image_generation,
-    normalize,
 )
-from meteolibre_model.models.unet3d_film import UNet3D
+from meteolibre_model.models.unet3d_film_dual import DualUNet3DFiLM
 
 
 def main():
@@ -80,19 +79,19 @@ def main():
     )
 
     # Initialize model
-    model = UNet3D(
-        in_channels=12,  # Adjust based on your data
-        out_channels=12,  # Adjust based on your data
-        features=[64, 128, 256],
-        context_dim=4,
-        context_frames=4,
-        num_additional_resnet_blocks=2,
+    model = DualUNet3DFiLM(
+        sat_in_channels=12,
+        kpi_in_channels=7,
+        sat_out_channels=12,
+        kpi_out_channels=7,
+        additional_channels= 10,
+        features = [32, 64, 128],
+        context_dim = 4,
+        embedding_dim = 128,
+        context_frames = 4,
+        num_additional_resnet_blocks = 2,
+        time_emb_dim= 64,
     )
-
-    for batch in dataloader:
-        break
-    breakpoint()
-
 
     # Initialize optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -144,14 +143,15 @@ def main():
 
         # Print epoch statistics
         print(f"Epoch {epoch + 1}/{num_epochs}, Loss: {avg_loss:.4f}")
-
+        
+        """
         if accelerator.is_main_process:
             with torch.no_grad():
                 permuted_batch_data = batch["patch_data"].permute(0, 2, 1, 3, 4)
                 x_context = permuted_batch_data[:, :, :4]
                 x_target = permuted_batch_data[:, :, 4:]
 
-                x_target = normalize(x_target, device)
+                #x_target = normalize(x_target, device)
 
                 unwrapped_model = accelerator.unwrap_model(model)
                 generated_images = full_image_generation(
@@ -182,6 +182,7 @@ def main():
                     tb_tracker.writer.add_image(
                         "Generated vs Target (normalized)", grid_normalized, epoch
                     )
+        """
 
         # This part for saving the model was already correct
         if (epoch) % SAVE_EVERY_N_EPOCHS == 0:

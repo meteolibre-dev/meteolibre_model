@@ -60,7 +60,7 @@ def main():
     hps = {"batch_size": batch_size, "learning_rate": learning_rate}
 
     accelerator.init_trackers(
-        "meteofrance-eps-prediction-training-rectified-flow_" + id_run, config=hps
+        "mtg-eps-prediction-training-rectified-flow_" + id_run, config=hps
     )
 
     # Initialize dataset

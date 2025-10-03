@@ -127,8 +127,6 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
             temporal_stack = np.stack(kpis, axis=0)  # (7, 128, 128)
             processed_ground.append(temporal_stack)
 
-
-
         # stack temporals
         ground_station_data = np.stack(processed_ground, axis=0)  # (5, 7, 128, 128)
         ground_station_data = torch.from_numpy(ground_station_data)
