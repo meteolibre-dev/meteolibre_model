@@ -12,7 +12,7 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed
 from tqdm.auto import tqdm
 from datetime import datetime
-
+import yaml
 
 from accelerate.utils import DistributedDataParallelKwargs
 from safetensors.torch import save_file
@@ -20,6 +20,12 @@ from safetensors.torch import save_file
 # Add project root to sys.path
 project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
+
+# Load config
+config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
+with open(config_path) as f:
+    config = yaml.safe_load(f)
+params = config['model_v0_mtg_meteofrance']
 
 
 from meteolibre_model.dataset.dataset_mtg_meteofrance import MeteoLibreMapDataset
@@ -42,16 +48,16 @@ def main():
     )
     device = accelerator.device
 
-    # Hyperparameters
-    LOG_EVERY_N_STEPS = 5
-    SAVE_EVERY_N_EPOCHS = 5
-    MODEL_DIR = "models/"
-    PARAMETRIZATION = "standard"
-    batch_size = 64
-    learning_rate = 1e-3
-    num_epochs = 200
-    seed = 42
-    gradient_clip_value = 1.0  # Gradient clipping value
+    # Load hyperparameters from config
+    LOG_EVERY_N_STEPS = params['log_every_n_steps']
+    SAVE_EVERY_N_EPOCHS = params['save_every_n_epochs']
+    MODEL_DIR = params['model_dir']
+    PARAMETRIZATION = params['parametrization']
+    batch_size = params['batch_size']
+    learning_rate = params['learning_rate']
+    num_epochs = params['num_epochs']
+    seed = params['seed']
+    gradient_clip_value = params['gradient_clip_value']
     id_run = str(datetime.utcnow())[:19]
     # Set seed for reproducibility
     set_seed(seed)
@@ -64,7 +70,7 @@ def main():
 
     # Initialize dataset
     dataset = MeteoLibreMapDataset(
-        localrepo="/workspace/dataset",  # Replace with your dataset path
+        localrepo=params['dataset_path'],
         cache_size=4,
         seed=seed,
     )
@@ -195,7 +201,7 @@ def main():
             if accelerator.is_main_process:
                 unwrapped_model = accelerator.unwrap_model(model)
                 # Save the EMA model's state dictionary
-                save_path = f"{MODEL_DIR}epoch_{epoch + 1}_rectified_flow.safetensors"
+                save_path = f"{MODEL_DIR}epoch_{epoch + 1}_mtg_meteofrance_.safetensors"
                 os.makedirs(MODEL_DIR, exist_ok=True)
                 save_file(unwrapped_model.state_dict(), save_path)
                 accelerator.print(f"Model saved to {save_path}")
