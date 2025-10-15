@@ -34,6 +34,20 @@ STD_CHANNEL = torch.tensor(
     ]
 )
 
+
+MEAN_LIGHTNING = torch.tensor(
+    [
+        0.0,
+    ]
+)
+
+STD_LIGHTNING = torch.tensor(
+    [
+        5.,
+    ]
+)
+
+
 MEAN_KPI = torch.tensor(
     [
         0.,
