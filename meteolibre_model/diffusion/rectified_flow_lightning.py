@@ -22,6 +22,7 @@ def normalize(sat_data, lightning_data, device):
     """
     Normalize the batch data using precomputed mean and std.
     """
+
     sat_data = (
         sat_data
         - MEAN_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
@@ -152,7 +153,7 @@ def trainer_step(model, batch, device, parametrization="standard"):
 
 
 def full_image_generation(
-    model, batch, steps=128, device="cuda", parametrization="standard"
+    model, batch, steps=128, device="cuda", parametrization="standard", nb_element=1
 ):
     """
     Generates full images using rectified flow ODE solver.
@@ -185,13 +186,13 @@ def full_image_generation(
         lightning_data = torch.where(mask_data_lightning, lightning_data, CLIP_MIN)
 
         batch_data = torch.concat([sat_data, lightning_data], dim=1)
-        batch_data = batch_data[[0]]
+        batch_data = batch_data[0:nb_element]
 
         x_context = batch_data[:, :, :4]  # Context frames
 
         last_context = x_context[:, :, 3:4]  # (batch_size, nb_channel, 1, h, w)
 
-        context_info = batch["spatial_position"].to(device)[[0], :]
+        context_info = batch["spatial_position"].to(device)[0:nb_element, :]
 
         batch_size, nb_channel, _, h, w = x_context.shape
 
@@ -201,6 +202,7 @@ def full_image_generation(
         dt = 1.0 / steps
 
         for i in range(steps-1):
+
             t_val = 1 - i * dt
             t_next_val = 1 - (i + 1) * dt
             t_batch = torch.full((batch_size,), t_val, device=device)

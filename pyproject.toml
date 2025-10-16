@@ -21,6 +21,8 @@ dependencies = [
     "matplotlib",
     "pyproj>=3.7.1",
     "imageio>=2.37.0",
+    "torchmetrics>=1.8.2",
+    "scikit-learn>=1.7.2",
 ]
 
 [tool.setuptools]

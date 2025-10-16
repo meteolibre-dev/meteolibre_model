@@ -24,10 +24,10 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate Rectified Flow model")
     parser.add_argument("--model_path", type=str, required=True, help="Path to the model weights file (.safetensors)")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run evaluation on")
-    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for evaluation")
-    parser.add_argument("--num_samples", type=int, default=10, help="Number of samples per input for probabilistic metrics")
+    parser.add_argument("--batch_size", type=int, default=64, help="Batch size for evaluation")
+    parser.add_argument("--num_samples", type=int, default=20, help="Number of samples per input for probabilistic metrics")
     parser.add_argument("--lightning_threshold", type=float, default=0.05, help="Threshold for binarizing lightning events")
-    parser.add_argument("--num_steps_list", type=str, default="8,16,128", help="Comma-separated list of inference steps to evaluate")
+    parser.add_argument("--num_steps_list", type=str, default="128", help="Comma-separated list of inference steps to evaluate")
     parser.add_argument("--dataset_path", type=str, default=None, help="Path to dataset (overrides config)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
 
@@ -49,8 +49,7 @@ def main():
     dataset = MeteoLibreMapDataset(
         localrepo=dataset_path,
         cache_size=4,
-        seed=args.seed,
-        split="test"  # Assuming the dataset has a test split
+        seed=args.seed, # Assuming the dataset has a test split
     )
 
     # Initialize DataLoader
@@ -86,6 +85,8 @@ def main():
     model.load_state_dict(state_dict)
     model.to(args.device)
     model.eval()
+
+    
 
     print(f"Loaded model from {args.model_path}")
     print(f"Evaluating on {len(dataset)} samples with batch size {args.batch_size}")

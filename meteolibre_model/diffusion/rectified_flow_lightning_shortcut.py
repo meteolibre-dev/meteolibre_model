@@ -277,15 +277,15 @@ def trainer_step(model, batch, device, parametrization="standard"):
 
 
 def full_image_generation(
-    model, batch, num_steps=128, device="cuda", parametrization="standard"
+    model, batch, steps=128, device="cuda", parametrization="standard"
 ):
     """
-    Generates full images using shortcut rectified flow (simple Euler sampling for flexibility in num_steps).
+    Generates full images using shortcut rectified flow (simple Euler sampling for flexibility in steps).
 
     Args:
         model: The neural network model.
         batch: Batch data for context.
-        num_steps: Number of steps (can be small for fast inference, e.g., 1, 2, 4).
+        steps: Number of steps (can be small for fast inference, e.g., 1, 2, 4).
         device: Device to run on.
         parametrization: Type of parametrization ("standard" or "endpoint").
 
@@ -326,11 +326,11 @@ def full_image_generation(
         # Start with noise (x1)
         x_t = torch.randn(batch_size, nb_channel, 1, h, w, device=device)
 
-        d_const = 1.0 / num_steps
+        d_const = 1.0 / steps
 
         t_val = 1.0
 
-        for i in range(num_steps):
+        for i in range(steps):
             t_batch = torch.full((batch_size,), t_val, device=device)
             d_batch = torch.full((batch_size,), d_const, device=device)
 

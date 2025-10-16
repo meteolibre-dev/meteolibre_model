@@ -1,12 +1,12 @@
+from tqdm import tqdm
+
 import torch
 from torchmetrics import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
-from skimage.metrics import mean_squared_error as mse_skimage  # If skimage available; else torch MSE
 import numpy as np
 from sklearn.metrics import precision_recall_fscore_support
+from meteolibre_model.diffusion.rectified_flow_lightning import full_image_generation, normalize
 
-from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import full_image_generation, denormalize
-
-def generate_data(model, test_loader, device, num_steps_list=[8, 16, 128], num_samples=10):
+def generate_data(model, test_loader, device, num_steps_list=[128], num_samples=10):
     """
     Generate all data for evaluation.
     
@@ -15,7 +15,7 @@ def generate_data(model, test_loader, device, num_steps_list=[8, 16, 128], num_s
         test_loader: DataLoader for test set.
         device: 'cuda' or 'cpu'.
         num_steps_list: Inference budgets to test.
-        num_samples: Samples per input for probabilistic metrics.
+        num_samples: Number of batches to evaluate.
     
     Returns:
         all_gens: Dict of generated data per step budget.
@@ -24,37 +24,41 @@ def generate_data(model, test_loader, device, num_steps_list=[8, 16, 128], num_s
     model.eval()
     
     # Initialize storage for generated data and ground truths
-    all_gens = {steps: [] for steps in num_steps_list}  # List of (mean_sat, mean_light) per batch
-    all_gts = []  # List of (gt_sat, gt_light) per batch
+    all_gens = {steps: [] for steps in num_steps_list}
+    all_gts = []
+    
     
     with torch.no_grad():
-        for batch in test_loader:
+        for batch_idx, batch in enumerate(test_loader):
+            if batch_idx >= num_samples:
+                break
+
+            print(f"Begin Eval on batch {batch_idx + 1}/{num_samples}")
+
+            batch["sat_patch_data"] = batch["sat_patch_data"].to(device)
+            batch["lightning_patch_data"] = batch["lightning_patch_data"].to(device)
+            batch["spatial_position"] = batch["spatial_position"].to(device)
+
             sat_data = batch["sat_patch_data"].permute(0, 2, 1, 3, 4)
             lightning_data = batch["lightning_patch_data"].permute(0, 2, 1, 3, 4)
+
             c_sat = sat_data.shape[1]
             c_lightning = lightning_data.shape[1]
             
-            # Ground truth (denormalized)
-            gt_sat, gt_light = denormalize(sat_data[:, :, 4:], lightning_data[:, :, 4:], device)
-            all_gts.append((gt_sat, gt_light))
+            # Ground truth (with normalized)
+            gt_sat, gt_light = normalize(sat_data[:, :, 4:], lightning_data[:, :, 4:], device)
+            all_gts.append((gt_sat.squeeze(2), gt_light.squeeze(2)))
             
             for steps in num_steps_list:
-                gens_sat, gens_light = [], []
-                for _ in range(num_samples):  # Multi-sample
-                    gen, _ = full_image_generation(model, batch, num_steps=steps, device=device)
-                    sat_gen, light_gen = denormalize(gen[:, :c_sat], gen[:, c_lightning:], device)
-                    gens_sat.append(sat_gen)
-                    gens_light.append(light_gen)
+                gen, _ = full_image_generation(model, batch, steps=steps, device=device, nb_element=test_loader.batch_size)
+                sat_gen, light_gen = gen[:, :c_sat].to(device), gen[:, c_sat:].to(device)
                 
-                # Mean gen for deterministic metrics
-                mean_sat = torch.mean(torch.stack(gens_sat), dim=0)
-                mean_light = torch.mean(torch.stack(gens_light), dim=0)
-                all_gens[steps].append((mean_sat, mean_light))
+                all_gens[steps].append((sat_gen.squeeze(2), light_gen.squeeze(2)))
     
     return all_gens, all_gts
 
 
-def compute_metrics(all_gens, all_gts, device, num_steps_list=[8, 16, 128], lightning_threshold=0.05):
+def compute_metrics(all_gens, all_gts, device, num_steps_list=[128], lightning_threshold=0.05):
     """
     Compute metrics from generated data and ground truths.
     
@@ -70,19 +74,19 @@ def compute_metrics(all_gens, all_gts, device, num_steps_list=[8, 16, 128], ligh
     """
     # Initialize metrics storage
     metrics = {steps: {'sat_mse': [], 'sat_psnr': [], 'sat_ssim': [], 
-                       'light_mae': [], 'light_pod': [], 'light_far': [], 'light_csi': []} 
+                       'light_mae': [], 'light_precision': [], 'light_recall': [], 'light_f1': []} 
                for steps in num_steps_list}
     
-    psnr = PeakSignalNoiseRatio(data_range=(-8, 8.0)).to(device)  # Adjust range based on denorm data
-    ssim = StructuralSimilarityIndexMeasure(data_range=(-8, 8.0)).to(device)
+    psnr = PeakSignalNoiseRatio(data_range=(-4, 4.0)).to(device)  # Adjust range based on denorm data
+    ssim = StructuralSimilarityIndexMeasure(data_range=(-4, 4.0)).to(device)
     
     for batch_idx in range(len(all_gts)):
         gt_sat, gt_light = all_gts[batch_idx]
         for steps in num_steps_list:
             mean_sat, mean_light = all_gens[steps][batch_idx]
-            
+
             # Sat metrics
-            mse_val = mse_skimage(mean_sat.cpu().numpy(), gt_sat.cpu().numpy())
+            mse_val = torch.nn.functional.mse_loss(mean_sat.cpu(), gt_sat.cpu())
             psnr_val = psnr(mean_sat, gt_sat)
             ssim_val = ssim(mean_sat, gt_sat)
             metrics[steps]['sat_mse'].append(mse_val)
@@ -96,16 +100,12 @@ def compute_metrics(all_gens, all_gts, device, num_steps_list=[8, 16, 128], ligh
             # Binarize for event metrics
             pred_bin = (mean_light > lightning_threshold).float().cpu().numpy()
             gt_bin = (gt_light > lightning_threshold).float().cpu().numpy()
+
             prec, rec, f1, _ = precision_recall_fscore_support(gt_bin.flatten(), pred_bin.flatten(), zero_division=0)
-            hits = np.sum((pred_bin == 1) & (gt_bin == 1))
-            misses = np.sum((pred_bin == 0) & (gt_bin == 1))
-            falses = np.sum((pred_bin == 1) & (gt_bin == 0))
-            pod = hits / (hits + misses) if (hits + misses) > 0 else 0
-            far = falses / (hits + falses) if (hits + falses) > 0 else 0
-            csi = hits / (hits + misses + falses) if (hits + misses + falses) > 0 else 0
-            metrics[steps]['light_pod'].append(pod)
-            metrics[steps]['light_far'].append(far)
-            metrics[steps]['light_csi'].append(csi)
+
+            metrics[steps]['light_precision'].append(prec[1])
+            metrics[steps]['light_recall'].append(rec[1])
+            metrics[steps]['light_f1'].append(f1[1])
     
     # Average metrics
     for steps in num_steps_list:
@@ -115,7 +115,7 @@ def compute_metrics(all_gens, all_gts, device, num_steps_list=[8, 16, 128], ligh
     return metrics
 
 
-def evaluate_model(model, test_loader, device, num_steps_list=[8, 16, 128], num_samples=10, lightning_threshold=0.05):
+def evaluate_model(model, test_loader, device, num_steps_list=[128], num_samples=10, lightning_threshold=0.05):
     """
     Evaluate model on test set for different step budgets.
     
@@ -124,7 +124,7 @@ def evaluate_model(model, test_loader, device, num_steps_list=[8, 16, 128], num_
         test_loader: DataLoader for test set.
         device: 'cuda' or 'cpu'.
         num_steps_list: Inference budgets to test.
-        num_samples: Samples per input for probabilistic metrics.
+        num_samples: Number of batches to evaluate.
         lightning_threshold: Binarize lightning > this as 'event'.
     
     Returns:
@@ -132,9 +132,13 @@ def evaluate_model(model, test_loader, device, num_steps_list=[8, 16, 128], num_
     """
     # Step 1: Generate all data
     all_gens, all_gts = generate_data(model, test_loader, device, num_steps_list, num_samples)
+
+    print("Generation finished")
     
     # Step 2: Compute metrics
     metrics = compute_metrics(all_gens, all_gts, device, num_steps_list, lightning_threshold)
+
+    print("Computing metrics finished")
     
     return metrics
 
