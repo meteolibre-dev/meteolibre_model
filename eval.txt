@@ -26,10 +26,11 @@ BASELINE (persistance):
   Evaluation Results:
 
 Steps: baseline
-  sat_mse: 0.2417
-  sat_psnr: 24.6144
-  sat_ssim: 0.7240
-  light_mae: 0.0147
-  light_precision: 0.6721
-  light_recall: 0.6525
-  light_f1: 0.6608
+  sat_mse: 0.2368
+  sat_psnr: 24.5138
+  sat_ssim: 0.7266
+  light_mae: 0.0154
+  light_precision: 0.6714
+  light_recall: 0.6665
+  light_f1: 0.6678
+  light_iou: 0.1023

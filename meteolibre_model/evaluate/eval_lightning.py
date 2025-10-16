@@ -1,7 +1,7 @@
 from tqdm import tqdm
 
 import torch
-from torchmetrics import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure
+from torchmetrics import PeakSignalNoiseRatio, StructuralSimilarityIndexMeasure, JaccardIndex
 import numpy as np
 from sklearn.metrics import precision_recall_fscore_support
 from meteolibre_model.diffusion.rectified_flow_lightning import full_image_generation, normalize
@@ -74,11 +74,12 @@ def compute_metrics(all_gens, all_gts, device, num_steps_list=[128], lightning_t
     """
     # Initialize metrics storage
     metrics = {steps: {'sat_mse': [], 'sat_psnr': [], 'sat_ssim': [], 
-                       'light_mae': [], 'light_precision': [], 'light_recall': [], 'light_f1': []} 
+                       'light_mae': [], 'light_precision': [], 'light_recall': [], 'light_f1': [], 'light_iou': []} 
                for steps in num_steps_list}
     
     psnr = PeakSignalNoiseRatio(data_range=(-4, 4.0)).to(device)  # Adjust range based on denorm data
     ssim = StructuralSimilarityIndexMeasure(data_range=(-4, 4.0)).to(device)
+    jaccard = JaccardIndex(task="binary", threshold=lightning_threshold).to(device)
     
     for batch_idx in range(len(all_gts)):
         gt_sat, gt_light = all_gts[batch_idx]
@@ -96,6 +97,12 @@ def compute_metrics(all_gens, all_gts, device, num_steps_list=[128], lightning_t
             # Lightning metrics (assume per-grid regression)
             mae_val = torch.mean(torch.abs(mean_light - gt_light)).item()
             metrics[steps]['light_mae'].append(mae_val)
+
+            # Calculate and store IoU score
+            # The target needs to be binarized and of integer type for torchmetrics
+            gt_light_bin_int = (gt_light > lightning_threshold).int()
+            iou_val = jaccard(mean_light, gt_light_bin_int)
+            metrics[steps]['light_iou'].append(iou_val.item())
             
             # Binarize for event metrics
             pred_bin = (mean_light > lightning_threshold).float().cpu().numpy()
