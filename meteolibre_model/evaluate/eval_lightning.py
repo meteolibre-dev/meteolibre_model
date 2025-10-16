@@ -101,16 +101,86 @@ def compute_metrics(all_gens, all_gts, device, num_steps_list=[128], lightning_t
             pred_bin = (mean_light > lightning_threshold).float().cpu().numpy()
             gt_bin = (gt_light > lightning_threshold).float().cpu().numpy()
 
-            prec, rec, f1, _ = precision_recall_fscore_support(gt_bin.flatten(), pred_bin.flatten(), zero_division=0)
+            prec, rec, f1, _ = precision_recall_fscore_support(gt_bin.flatten(), pred_bin.flatten(), average='binary', zero_division='warn')
 
-            metrics[steps]['light_precision'].append(prec[1])
-            metrics[steps]['light_recall'].append(rec[1])
-            metrics[steps]['light_f1'].append(f1[1])
+            metrics[steps]['light_precision'].append(prec)
+            metrics[steps]['light_recall'].append(rec)
+            metrics[steps]['light_f1'].append(f1)
     
     # Average metrics
+    avg_metrics = {}
     for steps in num_steps_list:
+        avg_metrics[steps] = {}
         for k in metrics[steps]:
-            metrics[steps][k] = np.mean(metrics[steps][k])
+            avg_metrics[steps][k] = np.mean(metrics[steps][k])
+    
+    return avg_metrics
+
+
+def generate_baseline_data(test_loader, device, num_samples=10):
+    """
+    Generate baseline data using previous ground truth data.
+    
+    Args:
+        test_loader: DataLoader for test set.
+        device: 'cuda' or 'cpu'.
+        num_samples: Number of batches to evaluate.
+    
+    Returns:
+        all_gens: Dict with 'baseline' key containing generated data.
+        all_gts: List of ground truths.
+    """
+    # Initialize storage for generated data and ground truths
+    all_gens = {'baseline': []}
+    all_gts = []
+    
+    with torch.no_grad():
+        for batch_idx, batch in enumerate(test_loader):
+            if batch_idx >= num_samples:
+                break
+
+            print(f"Begin Baseline Eval on batch {batch_idx + 1}/{num_samples}")
+
+            batch["sat_patch_data"] = batch["sat_patch_data"].to(device)
+            batch["lightning_patch_data"] = batch["lightning_patch_data"].to(device)
+            batch["spatial_position"] = batch["spatial_position"].to(device)
+
+            sat_data = batch["sat_patch_data"].permute(0, 2, 1, 3, 4)
+            lightning_data = batch["lightning_patch_data"].permute(0, 2, 1, 3, 4)
+
+            # Ground truth (with normalized)
+            gt_sat, gt_light = normalize(sat_data[:, :, 4:], lightning_data[:, :, 4:], device)
+            all_gts.append((gt_sat.squeeze(2), gt_light.squeeze(2)))
+            
+            # Baseline: use previous time step (index 3)
+            sat_gen, light_gen = normalize(sat_data[:, :, 3:4], lightning_data[:, :, 3:4], device)
+            all_gens['baseline'].append((sat_gen.squeeze(2), light_gen.squeeze(2)))
+    
+    return all_gens, all_gts
+
+
+def evaluate_baseline(test_loader, device, num_samples=10, lightning_threshold=0.05):
+    """
+    Evaluate baseline model on test set.
+    
+    Args:
+        test_loader: DataLoader for test set.
+        device: 'cuda' or 'cpu'.
+        num_samples: Number of batches to evaluate.
+        lightning_threshold: Binarize lightning > this as 'event'.
+    
+    Returns:
+        Dict of metrics for baseline.
+    """
+    # Step 1: Generate all data
+    all_gens, all_gts = generate_baseline_data(test_loader, device, num_samples)
+
+    print("Baseline generation finished")
+    
+    # Step 2: Compute metrics
+    metrics = compute_metrics(all_gens, all_gts, device, num_steps_list=['baseline'], lightning_threshold=lightning_threshold)
+
+    print("Computing baseline metrics finished")
     
     return metrics
 

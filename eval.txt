@@ -1,0 +1,35 @@
+Evaluation Results:
+
+64*20 elements:
+
+Steps: 128
+  sat_mse: 0.0952
+  sat_psnr: 28.5327
+  sat_ssim: 0.8042
+  light_mae: 0.0221
+  light_precision: 0.5482
+  light_recall: 0.6535
+  light_f1: 0.5950
+
+64*20 elements:
+
+  Steps: 128
+  sat_mse: 0.1076
+  sat_psnr: 27.8870
+  sat_ssim: 0.8000
+  light_mae: 0.0221
+  light_precision: 0.5157
+  light_recall: 0.6454
+  light_f1: 0.5724
+
+BASELINE (persistance):
+  Evaluation Results:
+
+Steps: baseline
+  sat_mse: 0.2417
+  sat_psnr: 24.6144
+  sat_ssim: 0.7240
+  light_mae: 0.0147
+  light_precision: 0.6721
+  light_recall: 0.6525
+  light_f1: 0.6608

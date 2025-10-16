@@ -149,7 +149,7 @@ def trainer_step(model, batch, device, parametrization="standard"):
         target_lightning.float(),
     )
 
-    return loss_sat + 1. * loss_lightning, loss_sat, loss_lightning
+    return loss_sat + 10. * loss_lightning, loss_sat, loss_lightning
 
 
 def full_image_generation(

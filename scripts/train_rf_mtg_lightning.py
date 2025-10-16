@@ -17,6 +17,8 @@ import yaml
 from accelerate.utils import DistributedDataParallelKwargs
 from safetensors.torch import save_file
 
+from safetensors.torch import load_file
+
 # Add project root to sys.path
 project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
@@ -97,6 +99,11 @@ def main():
         num_additional_resnet_blocks=2,
         time_emb_dim=64,
     )
+
+    model_path = "/workspace/meteolibre_model/mtg_lightning.safetensors"
+    state_dict = load_file(model_path)
+    
+    model.load_state_dict(state_dict)
 
     # Initialize optimizer
     optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
