@@ -1,5 +1,5 @@
 """
-Training script for MeteoLibre using Hugging Face Accelerate with Rectified Flow.
+Training script for MeteoLibre using Hugging Face Accelerate with Rectified Flow (shortcut version)
 This script trains a rectified flow model using the MeteoLibreMapDataset and UNet_DCAE_3D.
 """
 
@@ -24,17 +24,18 @@ project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
 
 from meteolibre_model.dataset.dataset_mtg_lightning import MeteoLibreMapDataset
-from meteolibre_model.diffusion.rectified_flow_lightning import (
+from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import (
     trainer_step,
     full_image_generation,
 )
+
 from meteolibre_model.models.unet3d_film_dual import DualUNet3DFiLM
 
 # Load config
 config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
 with open(config_path) as f:
     config = yaml.safe_load(f)
-params = config['model_v0_mtg_lightning']
+params = config['model_v0_mtg_lightning_shortcut']
 
 
 def main():
@@ -66,7 +67,7 @@ def main():
     hps = {"batch_size": batch_size, "learning_rate": learning_rate}
 
     accelerator.init_trackers(
-        "lightning-eps-prediction-training-rectified-flow_" + id_run, config=hps
+        "lightning_shortcut-eps-prediction-training-rectified-flow_" + id_run, config=hps
     )
 
     # Initialize dataset
@@ -93,7 +94,7 @@ def main():
         kpi_out_channels=1,
         additional_channels=3,
         features=[32, 64, 128, 256],
-        context_dim=4,
+        context_dim=5,
         embedding_dim=128,
         context_frames=4,
         num_additional_resnet_blocks=2,

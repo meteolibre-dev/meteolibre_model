@@ -21,3 +21,15 @@ model_v0_mtg_lightning:
   seed: 42
   gradient_clip_value: 1.0
   dataset_path: "/workspace/dataset"
+
+model_v0_mtg_lightning_shortcut:
+  log_every_n_steps: 5
+  save_every_n_epochs: 5
+  model_dir: "models/"
+  parametrization: "standard"
+  batch_size: 64
+  learning_rate: 0.001
+  num_epochs: 200
+  seed: 42
+  gradient_clip_value: 1.0
+  dataset_path: "/workspace/dataset"

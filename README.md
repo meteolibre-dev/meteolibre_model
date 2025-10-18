@@ -106,3 +106,22 @@ We welcome contributions from the community! If you would like to contribute to 
 ## License
 
 This project is licensed under the MIT License. See the `LICENSE` file for more details.
+
+#### Utils
+
+Download dataset example:
+
+```bash
+hf download meteolibre-dev/weather_mtg_europe_lightning_128_1km --repo-type dataset --local-dir .
+```
+
+Install uv:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+
+GPU monitoring:
+```bash
+uvx nvitop
+```
