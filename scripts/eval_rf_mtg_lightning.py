@@ -42,7 +42,10 @@ def main():
     config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
     with open(config_path) as f:
         config = yaml.safe_load(f)
-    params = config['model_v0_mtg_lightning']
+    if args.model_type == "shortcut":
+        params = config['model_v0_mtg_lightning_shortcut']
+    else:
+        params = config['model_v0_mtg_lightning']
 
     # Override dataset path if provided
     dataset_path = args.dataset_path or params['dataset_path']
@@ -64,19 +67,8 @@ def main():
     )
 
     # Initialize model
-    model = DualUNet3DFiLM(
-        sat_in_channels=12,
-        kpi_in_channels=1,
-        sat_out_channels=12,
-        kpi_out_channels=1,
-        additional_channels=3,
-        features=[32, 64, 128, 256],
-        context_dim=5, # 4 if this is non shortcut model
-        embedding_dim=128,
-        context_frames=4,
-        num_additional_resnet_blocks=2,
-        time_emb_dim=64,
-    )
+    model_params = params["model"]
+    model = DualUNet3DFiLM(**model_params)
 
     # Load model weights
     if args.model_path.endswith('.safetensors'):

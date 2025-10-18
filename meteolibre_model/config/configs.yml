@@ -21,6 +21,18 @@ model_v0_mtg_lightning:
   seed: 42
   gradient_clip_value: 1.0
   dataset_path: "/workspace/dataset"
+  model:
+    sat_in_channels: 12
+    kpi_in_channels: 1
+    sat_out_channels: 12
+    kpi_out_channels: 1
+    additional_channels: 3
+    features: [32, 64, 128, 256]
+    context_dim: 4
+    embedding_dim: 128
+    context_frames: 4
+    num_additional_resnet_blocks: 2
+    time_emb_dim: 64
 
 model_v0_mtg_lightning_shortcut:
   log_every_n_steps: 5
@@ -33,3 +45,15 @@ model_v0_mtg_lightning_shortcut:
   seed: 42
   gradient_clip_value: 1.0
   dataset_path: "/workspace/dataset"
+  model:
+    sat_in_channels: 12
+    kpi_in_channels: 1
+    sat_out_channels: 12
+    kpi_out_channels: 1
+    additional_channels: 3
+    features: [32, 64, 128, 256]
+    context_dim: 5
+    embedding_dim: 128
+    context_frames: 4
+    num_additional_resnet_blocks: 2
+    time_emb_dim: 64

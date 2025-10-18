@@ -87,19 +87,8 @@ def main():
     )
 
     # Initialize model
-    model = DualUNet3DFiLM(
-        sat_in_channels=12,
-        kpi_in_channels=1,
-        sat_out_channels=12,
-        kpi_out_channels=1,
-        additional_channels=3,
-        features=[32, 64, 128, 256],
-        context_dim=5,
-        embedding_dim=128,
-        context_frames=4,
-        num_additional_resnet_blocks=2,
-        time_emb_dim=64,
-    )
+    model_params = params["model"]
+    model = DualUNet3DFiLM(**model_params)
 
     # model_path = "/workspace/meteolibre_model/mtg_lightning.safetensors"
     # state_dict = load_file(model_path)
