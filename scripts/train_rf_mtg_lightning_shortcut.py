@@ -19,6 +19,9 @@ from safetensors.torch import save_file
 
 from safetensors.torch import load_file
 
+# custom optimizer TO REMOVE ?
+from heavyball import ForeachSOAP
+
 # Add project root to sys.path
 project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
@@ -96,7 +99,8 @@ def main():
     # model.load_state_dict(state_dict)
 
     # Initialize optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = ForeachSOAP(model.parameters(), lr=learning_rate)
 
     # Prepare for distributed training
     model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
