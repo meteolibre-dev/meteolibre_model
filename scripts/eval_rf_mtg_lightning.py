@@ -27,9 +27,11 @@ def main():
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size for evaluation")
     parser.add_argument("--num_samples", type=int, default=20, help="Number of samples per input for probabilistic metrics")
     parser.add_argument("--lightning_threshold", type=float, default=0.05, help="Threshold for binarizing lightning events")
-    parser.add_argument("--num_steps_list", type=str, default="128", help="Comma-separated list of inference steps to evaluate")
+    parser.add_argument("--num_steps_list", type=str, default="16", help="Comma-separated list of inference steps to evaluate")
     parser.add_argument("--dataset_path", type=str, default=None, help="Path to dataset (overrides config)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")
+    parser.add_argument("--model_type", type=str, default="shortcut", help="model_type (shortcut or standart)")
+
 
     args = parser.parse_args()
 
@@ -69,7 +71,7 @@ def main():
         kpi_out_channels=1,
         additional_channels=3,
         features=[32, 64, 128, 256],
-        context_dim=4,
+        context_dim=5, # 4 if this is non shortcut model
         embedding_dim=128,
         context_frames=4,
         num_additional_resnet_blocks=2,
@@ -100,7 +102,8 @@ def main():
         device=args.device,
         num_steps_list=num_steps_list,
         num_samples=args.num_samples,
-        lightning_threshold=args.lightning_threshold
+        lightning_threshold=args.lightning_threshold,
+        model_type=args.model_type,
     )
 
     # Print results

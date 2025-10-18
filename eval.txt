@@ -34,3 +34,39 @@ Steps: baseline
   light_recall: 0.6665
   light_f1: 0.6678
   light_iou: 0.1023
+
+
+SHORTCUT MODEL:
+Computing metrics finished
+
+Evaluation Results:
+
+Steps: 16
+  sat_mse: 0.0981
+  sat_psnr: 28.3788
+  sat_ssim: 0.8106
+  light_mae: 0.0216
+  light_precision: 0.6339
+  light_recall: 0.5192
+  light_f1: 0.5686
+  light_iou: 0.0791
+
+Steps: 64
+  sat_mse: 0.0983
+  sat_psnr: 28.3702
+  sat_ssim: 0.8114
+  light_mae: 0.0207
+  light_precision: 0.6609
+  light_recall: 0.5304
+  light_f1: 0.5860
+  light_iou: 0.0791
+
+Steps: 128
+  sat_mse: 0.0983
+  sat_psnr: 28.3581
+  sat_ssim: 0.8112
+  light_mae: 0.0208
+  light_precision: 0.6518
+  light_recall: 0.5208
+  light_f1: 0.5769
+  light_iou: 0.0791
