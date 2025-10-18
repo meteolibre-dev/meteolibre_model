@@ -24,9 +24,9 @@ def denormalize(data, device='cpu'):
     std = STD_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).to(device)
     return data * std + mean
 
-def create_gif(forecast_dir, ground_truth_dir, output_dir, forecast_steps, nb_channels):
+def create_video(forecast_dir, ground_truth_dir, output_dir, forecast_steps, nb_channels):
     """
-    Generates GIFs comparing forecasts to ground truth for each channel.
+    Generates videos comparing forecasts to ground truth for each channel.
     """
     os.makedirs(output_dir, exist_ok=True)
 
@@ -92,21 +92,21 @@ def create_gif(forecast_dir, ground_truth_dir, output_dir, forecast_steps, nb_ch
             plt.close(fig)
 
         if images:
-            gif_path = os.path.join(output_dir, f'channel_{channel}_comparison.gif')
-            imageio.mimsave(gif_path, images, fps=1)
-            print(f'Saved GIF for channel {channel} to {gif_path}')
+            video_path = os.path.join(output_dir, f'channel_{channel}_comparison.mp4')
+            imageio.mimsave(video_path, images, fps=1)
+            print(f'Saved video for channel {channel} to {video_path}')
 
 def main():
-    parser = argparse.ArgumentParser(description="Generate GIFs to compare forecasts with ground truth.")
+    parser = argparse.ArgumentParser(description="Generate videos to compare forecasts with ground truth.")
     parser.add_argument("--forecast_dir", type=str, default="generated_forecasts", help="Directory containing the forecast .npz files.")
     parser.add_argument("--ground_truth_dir", type=str, default="../data_inference/2025081108", help="Directory containing the ground truth .npy files.")
-    parser.add_argument("--output_dir", type=str, default="forecast_gifs", help="Directory to save the generated GIFs.")
+    parser.add_argument("--output_dir", type=str, default="forecast_videos", help="Directory to save the generated videos.")
     parser.add_argument("--forecast_steps", type=int, default=12, help="Number of forecast steps to visualize.")
     parser.add_argument("--nb_channels", type=int, default=12, help="Number of channels to visualize.")
     
     args = parser.parse_args()
     
-    create_gif(args.forecast_dir, args.ground_truth_dir, args.output_dir, args.forecast_steps, args.nb_channels)
+    create_video(args.forecast_dir, args.ground_truth_dir, args.output_dir, args.forecast_steps, args.nb_channels)
 
 if __name__ == "__main__":
     main()

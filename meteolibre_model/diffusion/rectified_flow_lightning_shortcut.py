@@ -7,7 +7,19 @@ https://arxiv.org/pdf/2410.12557
 import torch
 import math
 import random
-import matplotlib.pyplot as plt
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend to avoid display issues
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None  # If not available, set to None
+
+from meteolibre_model.diffusion.utils import (
+    MEAN_CHANNEL,
+    STD_CHANNEL,
+    MEAN_LIGHTNING,
+    STD_LIGHTNING,
+)
 
 from meteolibre_model.diffusion.utils import (
     MEAN_CHANNEL,
@@ -277,7 +289,7 @@ def trainer_step(model, batch, device, parametrization="standard"):
 
 
 def full_image_generation(
-    model, batch, steps=128, device="cuda", parametrization="standard"
+    model, batch, steps=128, device="cuda", parametrization="standard", nb_element=1
 ):
     """
     Generates full images using shortcut rectified flow (simple Euler sampling for flexibility in steps).
@@ -313,13 +325,13 @@ def full_image_generation(
         lightning_data = torch.where(mask_data_lightning, lightning_data, CLIP_MIN)
 
         batch_data = torch.concat([sat_data, lightning_data], dim=1)
-        batch_data = batch_data[[0]]
+        batch_data = batch_data[0:nb_element]
 
         x_context = batch_data[:, :, :4]  # Context frames
 
         last_context = x_context[:, :, 3:4]  # (batch_size, nb_channel, 1, h, w)
 
-        context_info = batch["spatial_position"].to(device)[[0], :]
+        context_info = batch["spatial_position"].to(device)[0:nb_element, :]
 
         batch_size, nb_channel, _, h, w = x_context.shape
 

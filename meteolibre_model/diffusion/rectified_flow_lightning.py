@@ -5,7 +5,12 @@ This module provides functions for training and generation using rectified flow.
 
 import torch
 import math
-import matplotlib.pyplot as plt
+try:
+    import matplotlib
+    matplotlib.use('Agg')  # Use non-interactive backend to avoid display issues
+    import matplotlib.pyplot as plt
+except ImportError:
+    plt = None  # If not available, set to None
 
 from meteolibre_model.diffusion.utils import (
     MEAN_CHANNEL,
