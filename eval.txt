@@ -39,7 +39,7 @@ Steps: baseline
 SHORTCUT MODEL:
 Computing metrics finished
 
-Evaluation Results:
+Evaluation Results ON Adam RUN (RUN 2025-10-18) :
 
 Steps: 16
   sat_mse: 0.0981
@@ -70,3 +70,36 @@ Steps: 128
   light_recall: 0.5208
   light_f1: 0.5769
   light_iou: 0.0791
+
+
+Evaluation Results ON SOAP RUN (RUN 2025-10-19):
+
+Steps: 16
+  sat_mse: 0.0601
+  sat_psnr: 30.5008
+  sat_ssim: 0.8663
+  light_mae: 0.0156
+  light_precision: 0.8654
+  light_recall: 0.6958
+  light_f1: 0.7710
+  light_iou: 0.0818
+
+Steps: 64
+  sat_mse: 0.0606
+  sat_psnr: 30.4786
+  sat_ssim: 0.8661
+  light_mae: 0.0151
+  light_precision: 0.8658
+  light_recall: 0.6879
+  light_f1: 0.7663
+  light_iou: 0.0818
+
+Steps: 128
+  sat_mse: 0.0605
+  sat_psnr: 30.4848
+  sat_ssim: 0.8660
+  light_mae: 0.0151
+  light_precision: 0.8635
+  light_recall: 0.6886
+  light_f1: 0.7656
+  light_iou: 0.0818
