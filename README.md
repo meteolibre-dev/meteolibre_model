@@ -93,6 +93,22 @@ python scripts/train.py --config configs/your_config.yaml
 
 For more detailed instructions on how to use the project, please refer to the documentation.
 
+## Performance Summary
+
+| Model          | Optimizer | Steps  | sat_mse | sat_psnr | sat_ssim | light_mae | light_precision | light_recall | light_f1 | light_iou |
+|----------------|-----------|--------|---------|----------|----------|-----------|-----------------|--------------|----------|-----------|
+| RF (Run 1)     | -         | 128    | 0.0952  | 28.5327  | 0.8042   | 0.0221    | 0.5482          | 0.6535       | 0.5950   | -         |
+| RF (Run 2)     | -         | 128    | 0.1076  | 27.8870  | 0.8000   | 0.0221    | 0.5157          | 0.6454       | 0.5724   | -         |
+| Baseline       | Persistence| baseline| 0.2368 | 24.5138  | 0.7266   | 0.0154    | 0.6714          | 0.6665       | 0.6678   | 0.1023    |
+| Shortcut       | Adam      | 16     | 0.0981  | 28.3788  | 0.8106   | 0.0216    | 0.6339          | 0.5192       | 0.5686   | 0.0791    |
+| Shortcut       | Adam      | 64     | 0.0983  | 28.3702  | 0.8114   | 0.0207    | 0.6609          | 0.5304       | 0.5860   | 0.0791    |
+| Shortcut       | Adam      | 128    | 0.0983  | 28.3581  | 0.8112   | 0.0208    | 0.6518          | 0.5208       | 0.5769   | 0.0791    |
+| Shortcut       | SOAP      | 16     | 0.0601  | 30.5008  | 0.8663   | 0.0156    | 0.8654          | 0.6958       | 0.7710   | 0.0818    |
+| Shortcut       | SOAP      | 64     | 0.0606  | 30.4786  | 0.8661   | 0.0151    | 0.8658          | 0.6879       | 0.7663   | 0.0818    |
+| Shortcut       | SOAP      | 128    | 0.0605  | 30.4848  | 0.8660   | 0.0151    | 0.8635          | 0.6886       | 0.7656   | 0.0818    |
+
+Metrics from evaluation on 64x20 elements (satellite and lightning data).
+
 ## Contributing
 
 We welcome contributions from the community! If you would like to contribute to the project, please follow these steps:
