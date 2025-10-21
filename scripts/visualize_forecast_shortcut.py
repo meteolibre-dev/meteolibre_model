@@ -15,7 +15,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir
 sys.path.insert(0, project_root)
 
 # Load config
-config_path = os.path.join(project_root, "config/configs.yml")
+config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
 with open(config_path) as f:
     config = yaml.safe_load(f)
 params = config['model_v0_mtg_lightning_shortcut']
@@ -43,11 +43,17 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
     date_part, time_part = date_str.split('_')
     year, month, day = map(int, date_part.split('-'))
     hour, minute = map(int, time_part.split('-'))
-    initial_date = datetime(year, month, day, hour, minute) - timedelta(minutes=context_frames * 10)
+    initial_date = datetime(year, month, day, hour, minute) - timedelta(minutes=forecast_steps*10)
 
     for channel in range(nb_channels):
         images = []
+
+        vmin=-4 #min(np.min(forecast_channel_data), np.min(true_channel_data))
+        vmax=None
+
         for step in range(forecast_steps):
+
+            
             prediction_date = initial_date + timedelta(minutes=10 * (step + 1))
 
             # Load forecast data
@@ -73,8 +79,8 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
             true_full = np.concatenate([sat_true, lightning_true], axis=0)
             true_channel_data = true_full[channel]
 
-            vmin = min(np.min(forecast_channel_data), np.min(true_channel_data))
-            vmax = max(np.max(forecast_channel_data), np.max(true_channel_data))
+            if not vmax:
+                vmax = max(np.max(forecast_channel_data), np.max(true_channel_data))
 
             # Generate a side-by-side comparison image
             fig, axes = plt.subplots(1, 2, figsize=(12, 6))
