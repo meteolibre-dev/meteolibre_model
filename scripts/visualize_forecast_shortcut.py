@@ -11,14 +11,15 @@ import h5py
 import yaml
 
 # Add project root to sys.path
-project_root = os.path.abspath("/workspace/meteolibre_model/")
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
 sys.path.insert(0, project_root)
 
 # Load config
-config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
+config_path = os.path.join(project_root, "config/configs.yml")
 with open(config_path) as f:
     config = yaml.safe_load(f)
 params = config['model_v0_mtg_lightning_shortcut']
+context_frames = params['model']['context_frames']
 
 c_sat = params['model']['sat_in_channels']
 c_lightning = params['model']['kpi_in_channels']
@@ -78,11 +79,11 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
             # Generate a side-by-side comparison image
             fig, axes = plt.subplots(1, 2, figsize=(12, 6))
             axes[0].imshow(forecast_channel_data, cmap='plasma', vmin=vmin, vmax=vmax)
-            axes[0].set_title(f'Forecast - Channel {channel} - {corrected_prediction_date}')
+            axes[0].set_title(f'Forecast - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
             axes[0].axis('off')
             
             axes[1].imshow(true_channel_data, cmap='plasma', vmin=vmin, vmax=vmax)
-            axes[1].set_title(f'True - Channel {channel} - {true_date}')
+            axes[1].set_title(f'True - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
             axes[1].axis('off')
 
             plt.tight_layout()
