@@ -30,6 +30,7 @@ from meteolibre_model.models.unet3d_film_dual import DualUNet3DFiLM
 from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import (
     normalize,
     denormalize,
+    CLIP_MIN,
 )
 from safetensors.torch import load_file
 
@@ -167,6 +168,9 @@ def tiled_inference(
     # Always add back the last context since always forecasting residual
     last_context_frame = initial_context[:, :, 3:4]
     x_t_full_res = x_t_full_res + last_context_frame
+
+    # Clamp results to be within the expected normalized range
+    x_t_full_res = torch.where(last_context_frame == CLIP_MIN, last_context_frame, x_t_full_res)
 
     return x_t_full_res.cpu()
 
