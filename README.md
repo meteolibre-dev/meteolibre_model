@@ -142,6 +142,11 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
 
+Doing inference:
+```bash
+python -m scripts.tiled_inference_shortcut --denoising_steps 16 --data_file ../dataset/data_inference_full/2025-10-20_09-00_full.h5
+```
+
 GPU monitoring:
 ```bash
 uvx nvitop
