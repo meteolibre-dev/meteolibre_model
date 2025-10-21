@@ -80,7 +80,7 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
             true_channel_data = true_full[channel]
 
             if not vmax:
-                vmax = max(np.max(forecast_channel_data), np.max(true_channel_data))
+                vmax = max(np.max(forecast_channel_data), np.max(true_channel_data)) + 1.0
 
             # Generate a side-by-side comparison image
             fig, axes = plt.subplots(1, 2, figsize=(12, 6))
