@@ -62,13 +62,13 @@ def denormalize(sat_data, lightning_data, device):
     Denormalize the batch data using precomputed mean and std.
     """
     sat_data = (
-        sat_data
+        sat_data.to(device)
         * STD_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
         + MEAN_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
     )
 
     lightning_data = (
-        lightning_data
+        lightning_data.to(device)
         * STD_LIGHTNING.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
         + MEAN_LIGHTNING.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
     )

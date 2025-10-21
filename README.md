@@ -131,6 +131,11 @@ Download dataset example:
 hf download meteolibre-dev/weather_mtg_europe_lightning_128_1km --repo-type dataset --local-dir .
 ```
 
+Download inference exemples (one):
+```bash
+hf download meteolibre-dev/weather_mtg_europe_lightning_128_1km --repo-type dataset --local-dir . data_inference_full/2025-10-20_09-00_full.h5
+```
+
 Install uv:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
