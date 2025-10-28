@@ -20,7 +20,7 @@ from safetensors.torch import save_file
 from safetensors.torch import load_file
 
 # custom optimizer TO REMOVE ?
-from heavyball import ForeachSOAP
+from heavyball import ForeachSOAP, ForeachMuon
 
 # Add project root to sys.path
 project_root = os.path.abspath("/workspace/meteolibre_model/")
@@ -38,7 +38,7 @@ from meteolibre_model.models.unet3d_film_dual import DualUNet3DFiLM
 config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
 with open(config_path) as f:
     config = yaml.safe_load(f)
-params = config['model_v0_mtg_world_lightning_shortcut']
+params = config['model_v1_mtg_world_lightning_shortcut']
 
 
 def main():
@@ -101,7 +101,8 @@ def main():
 
     # Initialize optimizer
     #optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    optimizer = ForeachSOAP(model.parameters(), lr=learning_rate)
+    optimizer = ForeachSOAP(model.parameters(), lr=learning_rate, foreach=False)
+    #optimizer = torch.optim.Muon(model.parameters(), lr=learning_rate)
 
     # Prepare for distributed training
     model, optimizer, dataloader = accelerator.prepare(model, optimizer, dataloader)
