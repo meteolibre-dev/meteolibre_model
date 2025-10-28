@@ -58,6 +58,7 @@ def main():
     SAVE_EVERY_N_EPOCHS = params['save_every_n_epochs']
     MODEL_DIR = params['model_dir']
     PARAMETRIZATION = params['parametrization']
+    INTERPOLATION = params.get('interpolation', 'linear')
     batch_size = params['batch_size']
     learning_rate = params['learning_rate']
     num_epochs = params['num_epochs']
@@ -121,7 +122,7 @@ def main():
             # Perform training step
             with accelerator.accumulate(model):
                 loss, loss_sat, loss_kpi = trainer_step(
-                    model, batch, device, PARAMETRIZATION
+                    model, batch, device, PARAMETRIZATION, INTERPOLATION
                 )
                 accelerator.backward(loss)
 

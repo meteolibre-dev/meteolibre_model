@@ -2,6 +2,9 @@
 Shortcut Rectified Flow implementation for weather forecasting diffusion model.
 This module provides functions for training and generation using shortcut models.
 https://arxiv.org/pdf/2410.12557
+This script supports multiple interpolation schedules:
+- 'linear': Standard Rectified Flow interpolation.
+- 'polynomial': A cubic noise schedule inspired by https://arxiv.org/abs/2301.11093
 """
 
 import torch
@@ -78,14 +81,23 @@ def denormalize(sat_data, lightning_data, device):
     return sat_data, lightning_data
 
 
-def get_x_t_rf(x0, x1, t):
+def get_x_t_rf(x0, x1, t, interpolation="linear"):
     """
-    Get the interpolated point x_t = (1 - t) * x0 + t * x1
+    Get the interpolated point x_t based on the chosen schedule.
+    - 'linear': x_t = (1 - t) * x0 + t * x1
+    - 'polynomial': x_t = (1 - t)^3 * x0 + (1 - (1 - t)^3) * x1
     """
-    return (1 - t) * x0 + t * x1
+    if interpolation == "linear":
+        return (1 - t) * x0 + t * x1
+    elif interpolation == "polynomial":
+        u = 1 - t
+        alpha = u ** 3
+        return alpha * x0 + (1 - alpha) * x1
+    else:
+        raise ValueError(f"Unknown interpolation schedule: {interpolation}")
 
 
-def trainer_step(model, batch, device, parametrization="standard"):
+def trainer_step(model, batch, device, parametrization="standard", interpolation="linear"):
     """
     Performs a single training step for the shortcut rectified flow model.
 
@@ -94,6 +106,7 @@ def trainer_step(model, batch, device, parametrization="standard"):
         batch: Batch data from the dataset.
         device: Device to run on.
         parametrization: Type of parametrization ("standard" or "endpoint"). Note: Only "standard" is adapted here.
+        interpolation: Interpolation schedule ('linear' or 'polynomial').
 
     Returns:
         The loss value for the training step, loss_sat, loss_lightning.
@@ -144,9 +157,17 @@ def trainer_step(model, batch, device, parametrization="standard"):
         d_emp = torch.zeros(num_emp, device=device)
 
         t_exp_emp = t_emp.view(num_emp, 1, 1, 1, 1)
-        xt_emp = get_x_t_rf(x0_emp, x1_emp, t_exp_emp)
+        xt_emp = get_x_t_rf(x0_emp, x1_emp, t_exp_emp, interpolation)
 
-        target_emp = x1_emp - x0_emp
+        if interpolation == "linear":
+            target_emp = x1_emp - x0_emp
+        elif interpolation == "polynomial":
+            u_emp = 1 - t_emp
+            u_exp_emp = u_emp.view(num_emp, 1, 1, 1, 1)
+            target_emp = 3 * (u_exp_emp ** 2) * (x1_emp - x0_emp)
+        else:
+            raise ValueError(f"Unknown interpolation schedule: {interpolation}")
+
 
         # Model input: concatenate context and x_t
         model_input_emp = torch.cat([x_context_emp, xt_emp], dim=2)  # (num_emp, C, 5, H, W)
@@ -205,7 +226,7 @@ def trainer_step(model, batch, device, parametrization="standard"):
             t_self[ii] = tt
 
         t_exp_self = t_self.view(num_self, 1, 1, 1, 1)
-        xt_self = get_x_t_rf(x0_self, x1_self, t_exp_self)
+        xt_self = get_x_t_rf(x0_self, x1_self, t_exp_self, interpolation)
 
         # Compute st: s_theta(xt, t, d)
         context_global_d = torch.cat(
