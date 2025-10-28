@@ -1,5 +1,8 @@
 import torch
 
+
+###################### SAT ######################
+# MEAN AND STD VALUE FOR SATELLITE 12 channels
 MEAN_CHANNEL = torch.tensor(
     [
         0.93817195,
@@ -34,7 +37,50 @@ STD_CHANNEL = torch.tensor(
     ]
 )
 
+# MEAN AND STD VALUE FOR SATELLITE 16 channels
+MEAN_CHANNEL_WORLD = torch.tensor(
+    [
+        1.677189,
+        1.9667041,
+        2.3071592,
+        3.3829305,
+        2.6255543,
+        0.6784291,
+        1.5380684,
+        0.7173622,
+        0.46271825,
+        45.23232,
+        40.01303,
+        71.96806,
+        86.034386,
+        77.35135,
+        2.995656,
+        12.74326,
+    ]
+)
 
+STD_CHANNEL_WORLD = torch.tensor(
+    [
+        1.7856231,
+        2.2896116,
+        2.9936695,
+        3.6691332,
+        3.2413375,
+        1.5605495,
+        1.65478,
+        0.8714534,
+        0.27746078,
+        20.622236,
+        13.706461,
+        29.819918,
+        32.18578,
+        23.981306,
+        1.0652865,
+        4.8988175,
+    ]
+)
+
+###################### SAT Li ######################
 MEAN_LIGHTNING = torch.tensor(
     [
         0.0,
@@ -43,14 +89,14 @@ MEAN_LIGHTNING = torch.tensor(
 
 STD_LIGHTNING = torch.tensor(
     [
-        5.,
+        5.0,
     ]
 )
 
-
+###################### KPI (NOAA) ######################
 MEAN_KPI = torch.tensor(
     [
-        0.,
+        0.0,
         2.52124902e00,
         1.74829998e02,
         7.07291195e00,
@@ -62,7 +108,7 @@ MEAN_KPI = torch.tensor(
 
 STD_KPI = torch.tensor(
     [
-        1.,
+        1.0,
         2.18011022e00,
         9.85573163e01,
         5.81943194e00,

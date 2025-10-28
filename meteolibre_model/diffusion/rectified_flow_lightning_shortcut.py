@@ -24,6 +24,8 @@ from meteolibre_model.diffusion.utils import (
 from meteolibre_model.diffusion.utils import (
     MEAN_CHANNEL,
     STD_CHANNEL,
+    MEAN_CHANNEL_WORLD,
+    STD_CHANNEL_WORLD,
     MEAN_LIGHTNING,
     STD_LIGHTNING,
 )
@@ -40,8 +42,8 @@ def normalize(sat_data, lightning_data, device):
     """
     sat_data = (
         sat_data
-        - MEAN_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
-    ) / STD_CHANNEL.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
+        - MEAN_CHANNEL_WORLD.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
+    ) / STD_CHANNEL_WORLD.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
 
     # Clamp to prevent extreme values
     sat_data = sat_data.clamp(CLIP_MIN, 4)

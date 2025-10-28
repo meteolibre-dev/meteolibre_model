@@ -129,6 +129,7 @@ Download dataset example:
 
 ```bash
 hf download meteolibre-dev/weather_mtg_europe_lightning_128_1km --repo-type dataset --local-dir .
+hf download meteolibre-dev/weather_mtg_world_lightning_128_0dot012 --repo-type dataset --local-dir .
 ```
 
 Download inference exemples (one):
