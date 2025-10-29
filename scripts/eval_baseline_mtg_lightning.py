@@ -33,7 +33,7 @@ def main():
     config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
     with open(config_path) as f:
         config = yaml.safe_load(f)
-    params = config['model_v0_mtg_lightning']
+    params = config['model_v0_mtg_world_lightning_shortcut']
 
     # Override dataset path if provided
     dataset_path = args.dataset_path or params['dataset_path']

@@ -23,7 +23,8 @@ def generate_data(model, test_loader, device, num_steps_list=[128], num_samples=
     model.eval()
     
     if model_type == "standard":
-        from meteolibre_model.diffusion.rectified_flow_lightning import full_image_generation, normalize
+        from meteolibre_model.diffusion.rectified_flow_lightning import full_image_generation
+        from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import normalize
     elif model_type == "shortcut":
         from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import full_image_generation, normalize
     else:
@@ -145,7 +146,7 @@ def generate_baseline_data(test_loader, device, num_samples=10):
         all_gens: Dict with 'baseline' key containing generated data.
         all_gts: List of ground truths.
     """
-    from meteolibre_model.diffusion.rectified_flow_lightning import normalize
+    from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import normalize
     
     # Initialize storage for generated data and ground truths
     all_gens = {'baseline': []}

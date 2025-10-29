@@ -103,3 +103,46 @@ Steps: 128
   light_recall: 0.6886
   light_f1: 0.7656
   light_iou: 0.0818
+
+
+############ EVAL ON WORLD DATASER ############
+Persistance MODEL
+Steps: baseline
+  sat_mse: 0.0700
+  sat_psnr: 30.4221
+  sat_ssim: 0.8238
+  light_mae: 0.0126
+  light_precision: 0.6934
+  light_recall: 0.6976
+  light_f1: 0.6948
+  light_iou: 0.1214
+
+  Steps: 16
+  sat_mse: 0.0254
+  sat_psnr: 34.8687
+  sat_ssim: 0.8935
+  light_mae: 0.0104
+  light_precision: 0.8507
+  light_recall: 0.8558
+  light_f1: 0.8530
+  light_iou: 0.0709
+
+Steps: 64
+  sat_mse: 0.0256
+  sat_psnr: 34.8590
+  sat_ssim: 0.8929
+  light_mae: 0.0102
+  light_precision: 0.8515
+  light_recall: 0.8525
+  light_f1: 0.8517
+  light_iou: 0.0709
+
+Steps: 128
+  sat_mse: 0.0257
+  sat_psnr: 34.8336
+  sat_ssim: 0.8929
+  light_mae: 0.0099
+  light_precision: 0.8525
+  light_recall: 0.8500
+  light_f1: 0.8511
+  light_iou: 0.0709
