@@ -18,7 +18,7 @@ sys.path.insert(0, project_root)
 config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
 with open(config_path) as f:
     config = yaml.safe_load(f)
-params = config['model_v0_mtg_lightning_shortcut']
+params = config['model_v1_mtg_world_lightning_shortcut']
 context_frames = params['model']['context_frames']
 
 c_sat = params['model']['sat_in_channels']
@@ -39,8 +39,10 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
 
     # Parse initial_date from filename
     filename = os.path.basename(data_file)
+
     date_str = filename.split('_full.h5')[0]  # "2025-10-14_04-00"
-    date_part, time_part = date_str.split('_')
+    date_part, time_part = date_str.split('_')[0], date_str.split('_')[1] 
+
     year, month, day = map(int, date_part.split('-'))
     hour, minute = map(int, time_part.split('-'))
     initial_date = datetime(year, month, day, hour, minute) - timedelta(minutes=forecast_steps*10)
