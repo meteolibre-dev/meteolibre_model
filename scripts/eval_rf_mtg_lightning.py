@@ -43,7 +43,7 @@ def main():
     with open(config_path) as f:
         config = yaml.safe_load(f)
     if args.model_type == "shortcut":
-        params = config['model_v0_mtg_world_lightning_shortcut']
+        params = config['model_v1_mtg_world_lightning_shortcut']
     else:
         params = config['model_v0_mtg_lightning']
 

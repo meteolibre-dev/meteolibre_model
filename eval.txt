@@ -105,7 +105,7 @@ Steps: 128
   light_iou: 0.0818
 
 
-############ EVAL ON WORLD DATASER ############
+############ EVAL ON WORLD DATASER ############ (2025/10/29)
 Persistance MODEL
 Steps: baseline
   sat_mse: 0.0700
@@ -116,6 +116,8 @@ Steps: baseline
   light_recall: 0.6976
   light_f1: 0.6948
   light_iou: 0.1214
+
+SHORTCUT MODEL (with linear noise schedule)
 
   Steps: 16
   sat_mse: 0.0254
@@ -146,3 +148,66 @@ Steps: 128
   light_recall: 0.8500
   light_f1: 0.8511
   light_iou: 0.0709
+
+SHORTCUT MODEL with polynomial noise schedule:
+
+Steps: 16
+  sat_mse: 0.0349
+  sat_psnr: 34.1011
+  sat_ssim: 0.8814
+  light_mae: 0.0181
+  light_precision: 0.6492
+  light_recall: 0.7478
+  light_f1: 0.6919
+  light_iou: 0.0661
+
+Steps: 64
+  sat_mse: 0.0354
+  sat_psnr: 34.0423
+  sat_ssim: 0.8814
+  light_mae: 0.0172
+  light_precision: 0.6755
+  light_recall: 0.7384
+  light_f1: 0.7033
+  light_iou: 0.0661
+
+Steps: 128
+  sat_mse: 0.0358
+  sat_psnr: 33.9969
+  sat_ssim: 0.8809
+  light_mae: 0.0175
+  light_precision: 0.6684
+  light_recall: 0.7427
+  light_f1: 0.7016
+  light_iou: 0.0661
+
+RUN 2:
+Steps: 16
+  sat_mse: 0.0233
+  sat_psnr: 35.2970
+  sat_ssim: 0.9077
+  light_mae: 0.0182
+  light_precision: 0.6669
+  light_recall: 0.7765
+  light_f1: 0.7160
+  light_iou: 0.0717
+
+Steps: 64
+  sat_mse: 0.0235
+  sat_psnr: 35.2690
+  sat_ssim: 0.9079
+  light_mae: 0.0175
+  light_precision: 0.6763
+  light_recall: 0.7569
+  light_f1: 0.7127
+  light_iou: 0.0717
+
+Steps: 128
+  sat_mse: 0.0237
+  sat_psnr: 35.2426
+  sat_ssim: 0.9076
+  light_mae: 0.0175
+  light_precision: 0.6882
+  light_recall: 0.7584
+  light_f1: 0.7195
+  light_iou: 0.0717
