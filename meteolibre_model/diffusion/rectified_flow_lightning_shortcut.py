@@ -97,7 +97,7 @@ def get_x_t_rf(x0, x1, t, interpolation="linear"):
         raise ValueError(f"Unknown interpolation schedule: {interpolation}")
 
 
-def trainer_step(model, batch, device, parametrization="standard", interpolation="linear"):
+def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", interpolation="linear"):
     """
     Performs a single training step for the shortcut rectified flow model.
 
@@ -105,6 +105,7 @@ def trainer_step(model, batch, device, parametrization="standard", interpolation
         model: The neural network model (must now accept conditioning on t and d).
         batch: Batch data from the dataset.
         device: Device to run on.
+        sigma: Noise level to add to input context (default 0.0).
         parametrization: Type of parametrization ("standard" or "endpoint"). Note: Only "standard" is adapted here.
         interpolation: Interpolation schedule ('linear' or 'polynomial').
 
@@ -129,6 +130,8 @@ def trainer_step(model, batch, device, parametrization="standard", interpolation
     batch_data = torch.concat([sat_data, lightning_data], dim=1)
 
     x_context = batch_data[:, :, :4]  # Context frames
+    if sigma > 0:
+        x_context += torch.randn_like(x_context) * sigma
 
     # Always forecast the residual
     x0 = batch_data[:, :, 4:] - batch_data[:, :, 3:4]  # Residual (data)
