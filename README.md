@@ -109,6 +109,23 @@ For more detailed instructions on how to use the project, please refer to the do
 
 Metrics from evaluation on 64x20 elements (satellite and lightning data).
 
+## World Performance Summary
+
+| Model                  | Optimizer | Steps  | sat_mse | sat_psnr | sat_ssim | light_mae | light_precision | light_recall | light_f1 | light_iou |
+|-------------------------|-----------|--------|---------|----------|----------|-----------|-----------------|--------------|----------|-----------|
+| Baseline                | Persistence | baseline | 0.0700  | 30.4221  | 0.8238   | 0.0126    | 0.6934          | 0.6976       | 0.6948   | 0.1214    |
+| Linear Shortcut (Run 1)| -         | 16     | 0.0254  | 34.8687  | 0.8935   | 0.0104    | 0.8507          | 0.8558       | 0.8530   | 0.0709    |
+| Linear Shortcut (Run 1)| -         | 64     | 0.0256  | 34.8590  | 0.8929   | 0.0102    | 0.8515          | 0.8525       | 0.8517   | 0.0709    |
+| Linear Shortcut (Run 1)| -         | 128    | 0.0257  | 34.8336  | 0.8929   | 0.0099    | 0.8525          | 0.8500       | 0.8511   | 0.0709    |
+| Polynomial Shortcut    | -         | 16     | 0.0349  | 34.1011  | 0.8814   | 0.0181    | 0.6492          | 0.7478       | 0.6919   | 0.0661    |
+| Polynomial Shortcut    | -         | 64     | 0.0354  | 34.0423  | 0.8814   | 0.0172    | 0.6755          | 0.7384       | 0.7033   | 0.0661    |
+| Polynomial Shortcut    | -         | 128    | 0.0358  | 33.9969  | 0.8809   | 0.0175    | 0.6684          | 0.7427       | 0.7016   | 0.0661    |
+| Linear Shortcut (Run 2)| -         | 16     | 0.0233  | 35.2970  | 0.9077   | 0.0182    | 0.6669          | 0.7765       | 0.7160   | 0.0717    |
+| Linear Shortcut (Run 2)| -         | 64     | 0.0235  | 35.2690  | 0.9079   | 0.0175    | 0.6763          | 0.7569       | 0.7127   | 0.0717    |
+| Linear Shortcut (Run 2)| -         | 128    | 0.0237  | 35.2426  | 0.9076   | 0.0175    | 0.6882          | 0.7584       | 0.7195   | 0.0717    |
+
+Metrics from evaluation on world dataset (satellite and lightning data).
+
 ## Contributing
 
 We welcome contributions from the community! If you would like to contribute to the project, please follow these steps:
