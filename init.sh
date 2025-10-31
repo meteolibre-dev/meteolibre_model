@@ -24,8 +24,8 @@ cd ..
 mkdir dataset
 cd dataset
 
-
 # cli to download data
-hf download meteolibre-dev/mtg_europe_128_1km --repo-type dataset --local-dir data/
+hf download meteolibre-dev/weather_mtg_world_lightning_128_0dot012 --repo-type dataset --local-dir .
 
 # if we want to use heavyball sudo apt-get -y install build-essential
+apt install gcc # for heavyball / triton
