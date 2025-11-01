@@ -211,3 +211,27 @@ Steps: 128
   light_recall: 0.7584
   light_f1: 0.7195
   light_iou: 0.0717
+
+RUN 3 (polynomial with input noise with 40 elements):
+
+Steps: 16
+sat_mse: 0.0343
+sat_psnr: 33.8196
+sat_ssim: 0.8785
+light_mae: 0.0212
+light_mse: 0.0033
+light_precision: 0.5906
+light_recall: 0.6477
+light_f1: 0.6160
+light_iou: 0.0633
+
+Steps: baseline
+  sat_mse: 0.0697
+  sat_psnr: 30.4237
+  sat_ssim: 0.8227
+  light_mae: 0.0110
+  light_mse: 0.0034
+  light_precision: 0.6901
+  light_recall: 0.6824
+  light_f1: 0.6854
+  light_iou: 0.1223

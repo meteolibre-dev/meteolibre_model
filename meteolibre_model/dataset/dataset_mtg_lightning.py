@@ -149,7 +149,7 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
                     self.seed
                     + worker_id
                     + rank * worker_info.num_workers
-                    + random.randint(0, 1000)
+                    #+ random.randint(0, 1000)
                 )  # + round(datetime.now().timestamp() * 1000)
                 g.manual_seed(seed)
 

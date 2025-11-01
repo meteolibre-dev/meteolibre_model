@@ -22,7 +22,7 @@ def main():
     parser = argparse.ArgumentParser(description="Evaluate Baseline model")
     parser.add_argument("--device", type=str, default="cuda", help="Device to run evaluation on")
     parser.add_argument("--batch_size", type=int, default=64, help="Batch size for evaluation")
-    parser.add_argument("--num_samples", type=int, default=20, help="Number of samples per input for probabilistic metrics")
+    parser.add_argument("--num_samples", type=int, default=40, help="Number of samples per input for probabilistic metrics")
     parser.add_argument("--lightning_threshold", type=float, default=0.05, help="Threshold for binarizing lightning events")
     parser.add_argument("--dataset_path", type=str, default=None, help="Path to dataset (overrides config)")
     parser.add_argument("--seed", type=int, default=42, help="Random seed")

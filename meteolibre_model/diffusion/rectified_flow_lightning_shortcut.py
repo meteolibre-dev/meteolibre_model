@@ -401,6 +401,10 @@ def full_image_generation(
     # Always add back the last context since always forecasting residual
     last_context = x_context[:, :, 3:4]  # (batch_size, nb_channel, 1, h, w)
     x_t = x_t + last_context.expand(-1, -1, 1, -1, -1)
+    
+    x_t = torch.where(
+        last_context == CLIP_MIN, last_context, x_t
+    )
 
     model.train()
     return x_t.cpu(), batch_data[:, :, 4:]

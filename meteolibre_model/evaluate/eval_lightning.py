@@ -80,7 +80,7 @@ def compute_metrics(all_gens, all_gts, device, num_steps_list=[128], lightning_t
     """
     # Initialize metrics storage
     metrics = {steps: {'sat_mse': [], 'sat_psnr': [], 'sat_ssim': [], 
-                       'light_mae': [], 'light_precision': [], 'light_recall': [], 'light_f1': [], 'light_iou': []} 
+                       'light_mae': [], 'light_mse': [], 'light_precision': [], 'light_recall': [], 'light_f1': [], 'light_iou': []} 
                for steps in num_steps_list}
     
     psnr = PeakSignalNoiseRatio(data_range=(-4, 4.0)).to(device)  # Adjust range based on denorm data
@@ -106,6 +106,8 @@ def compute_metrics(all_gens, all_gts, device, num_steps_list=[128], lightning_t
             # Lightning metrics (assume per-grid regression)
             mae_val = torch.mean(torch.abs(mean_light - gt_light)).item()
             metrics[steps]['light_mae'].append(mae_val)
+            light_mse_val = torch.nn.functional.mse_loss(mean_light.cpu(), gt_light.cpu())
+            metrics[steps]['light_mse'].append(light_mse_val)
 
             # Calculate and store IoU score
             # The target needs to be binarized and of integer type for torchmetrics
