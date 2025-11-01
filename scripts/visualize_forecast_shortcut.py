@@ -85,14 +85,16 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
                 vmax = max(np.max(forecast_channel_data), np.max(true_channel_data)) + 1.0
 
             # Generate a side-by-side comparison image
-            fig, axes = plt.subplots(1, 2, figsize=(12, 6))
-            axes[0].imshow(forecast_channel_data, cmap='plasma', vmin=vmin, vmax=vmax)
+            fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+            im0 = axes[0].imshow(forecast_channel_data, cmap='plasma', vmin=vmin, vmax=vmax)
             axes[0].set_title(f'Forecast - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
             axes[0].axis('off')
+            plt.colorbar(im0, ax=axes[0], shrink=0.8)
             
-            axes[1].imshow(true_channel_data, cmap='plasma', vmin=vmin, vmax=vmax)
+            im1 = axes[1].imshow(true_channel_data, cmap='plasma', vmin=vmin, vmax=vmax)
             axes[1].set_title(f'True - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
             axes[1].axis('off')
+            plt.colorbar(im1, ax=axes[1], shrink=0.8)
 
             plt.tight_layout()
             
