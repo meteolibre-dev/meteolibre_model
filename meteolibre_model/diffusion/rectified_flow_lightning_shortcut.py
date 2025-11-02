@@ -17,16 +17,8 @@ try:
 except ImportError:
     plt = None  # If not available, set to None
 
-from meteolibre_model.diffusion.utils import (
-    MEAN_CHANNEL,
-    STD_CHANNEL,
-    MEAN_LIGHTNING,
-    STD_LIGHTNING,
-)
 
 from meteolibre_model.diffusion.utils import (
-    MEAN_CHANNEL,
-    STD_CHANNEL,
     MEAN_CHANNEL_WORLD,
     STD_CHANNEL_WORLD,
     MEAN_LIGHTNING,
@@ -315,7 +307,7 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
 
 
 def full_image_generation(
-    model, batch, steps=128, device="cuda", parametrization="standard", nb_element=1
+    model, batch, steps=128, device="cuda", parametrization="standard", nb_element=1, normalize_input=True
 ):
     """
     Generates full images using shortcut rectified flow (simple Euler sampling for flexibility in steps).
@@ -326,6 +318,8 @@ def full_image_generation(
         steps: Number of steps (can be small for fast inference, e.g., 1, 2, 4).
         device: Device to run on.
         parametrization: Type of parametrization ("standard" or "endpoint").
+        nb_element: Number of elements to generate.
+        normalize_input: If True, normalize the input data.
 
     Returns:
         Generated images.
@@ -345,8 +339,9 @@ def full_image_generation(
         mask_data_lightning = lightning_data != -10.0
         mask_data_sat = sat_data != CLIP_MIN
 
-        # Normalize
-        sat_data, lightning_data = normalize(sat_data, lightning_data, device)
+        if normalize_input:
+            # Normalize
+            sat_data, lightning_data = normalize(sat_data, lightning_data, device)
 
         lightning_data = torch.where(mask_data_lightning, lightning_data, CLIP_MIN)
 
