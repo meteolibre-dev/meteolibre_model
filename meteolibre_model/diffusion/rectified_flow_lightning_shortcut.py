@@ -358,6 +358,8 @@ def full_image_generation(
         parametrization: Type of parametrization ("standard" or "endpoint").
         nb_element: Number of elements to generate.
         normalize_input: If True, normalize the input data.
+        plot_images: If True, plot and save the generated satellite images.
+        save_path: Path to save the plot if plot_images is True.
 
     Returns:
         Generated images.
@@ -448,4 +450,6 @@ def full_image_generation(
     x_t = torch.where(last_context == CLIP_MIN, last_context, x_t)
 
     model.train()
-    return x_t.cpu(), batch_data[:, :, model.context_frames :]
+    generated, target = x_t.cpu(), batch_data[:, :, model.context_frames :].cpu()
+
+    return generated, target
