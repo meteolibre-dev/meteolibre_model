@@ -154,17 +154,16 @@ Download inference exemples (one):
 hf download meteolibre-dev/weather_mtg_europe_lightning_128_1km --repo-type dataset --local-dir . data_inference_full/2025-10-20_09-00_full.h5
 ```
 
-Install uv:
-```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-```
-
 
 Doing inference:
 ```bash
 python -m scripts.tiled_inference_shortcut --denoising_steps 16 --data_file ../dataset/data_inference_full/2025-10-20_09-00_full.h5
 
 python -m scripts.tiled_inference_world_shortcut --denoising_steps 16 --data_file ../dataset/data_inference_full/2025-07-25_21-30_tropical_africa_full.h5 --model_path models/model_v1_mtg_world_lightning_shortcut_polynomial_e56.safetensors
+
+# with shortcut model
+python -m scripts.tiled_inference_world_correction --denoising_steps 16 --data_file ../dataset/data_inference_full/2025-08-13_20-40_europe_full.h5 --model_path models/models_world_shortcut/model_v1_mtg_world_lightning_shortcut_polynomial_e56.safetensors --correction_model_path correction_models/v3_correction_model_epoch_5.safetensors
+
 ```
 
 To visualize the results:
@@ -172,7 +171,10 @@ To visualize the results:
 pip install imageio[ffmpeg]  
 python -m scripts.visualize_forecast_shortcut --data_file ../dataset/data_inference_full/2025-07-25_21-30_europe_full.h5
 ```
-
+Install uv:
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 GPU monitoring:
 ```bash

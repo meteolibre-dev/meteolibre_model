@@ -36,7 +36,7 @@ from meteolibre_model.models.unet3d_film_dual import DualUNet3DFiLM
 config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
 with open(config_path) as f:
     config = yaml.safe_load(f)
-params = config['model_v1_mtg_world_lightning_shortcut']
+params = config['model_v4_mtg_world_lightning_shortcut']
 
 def main():
     # Initialize Accelerator with bfloat16 precision and logging
@@ -60,6 +60,7 @@ def main():
     learning_rate = params['learning_rate']
     num_epochs = params['num_epochs']
     seed = params['seed']
+    residual = params.get(bool(['residual']), True)
     sigma_noise_input = params['sigma_noise_input']
     gradient_clip_value = params['gradient_clip_value']
     id_run = str(datetime.utcnow())[:19]
@@ -121,8 +122,9 @@ def main():
             # Perform training step
             with accelerator.accumulate(model):
                 loss, loss_sat, loss_kpi = trainer_step(
-                    model, batch, device, parametrization=PARAMETRIZATION, interpolation=INTERPOLATION, sigma=sigma_noise_input
+                    model, batch, device, parametrization=PARAMETRIZATION, interpolation=INTERPOLATION, sigma=sigma_noise_input, use_residual=residual
                 )
+
                 accelerator.backward(loss)
 
                 # Gradient clipping
@@ -172,6 +174,7 @@ def main():
                     batch,
                     device=accelerator.device,
                     parametrization=PARAMETRIZATION,
+                    use_residual=residual
                 )
 
                 # Select one channel and one batch item for visualization

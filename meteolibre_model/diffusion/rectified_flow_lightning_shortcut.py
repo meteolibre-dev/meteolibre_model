@@ -141,7 +141,7 @@ def trainer_step(
     if sigma > 0:
         x_context += torch.randn_like(x_context) * sigma
 
-        if use_residual:
+    if use_residual:
         # Forecast the residual
         x0 = (
             batch_data[:, :, model.context_frames :]
@@ -446,11 +446,11 @@ def full_image_generation(
             t_val -= d_const
 
         if use_residual:
-        # Add back the last context since forecasting residual
-        last_context = x_context[
-            :, :, (model.context_frames - 1) : model.context_frames
-        ]  # (batch_size, nb_channel, 1, h, w)
-        x_t = x_t + last_context.expand(-1, -1, 1, -1, -1)
+            # Add back the last context since forecasting residual
+            last_context = x_context[
+                :, :, (model.context_frames - 1) : model.context_frames
+            ]  # (batch_size, nb_channel, 1, h, w)
+            x_t = x_t + last_context.expand(-1, -1, 1, -1, -1)
 
         x_t = torch.where(last_context == CLIP_MIN, last_context, x_t)
 
