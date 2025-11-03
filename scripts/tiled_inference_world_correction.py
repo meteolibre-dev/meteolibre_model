@@ -191,6 +191,7 @@ def tiled_correction_inference(
     _, C, T_ctx, H_big, W_big = initial_context.shape
     assert T_ctx == 2
     x_t_full_res = initial_x.to(device)  # Use provided initial_x instead of randn
+    x_t_full_res = x_t_full_res.squeeze(2)
     # Create two grids of patches
     # Grid 1: Standard grid
     y_starts1 = list(range(0, H_big - patch_size + 1, patch_size))
@@ -258,6 +259,8 @@ def tiled_correction_inference(
                     patch_x_t_batch.append(patch_x_t)
                     patch_context_batch.append(patch_context)
                     context_global_batch.append(context_global)
+                
+
                 model_input = torch.cat(
                     [
                         torch.cat(patch_context_batch, dim=0),
