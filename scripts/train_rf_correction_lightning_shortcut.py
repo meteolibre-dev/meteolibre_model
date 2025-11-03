@@ -15,15 +15,15 @@ from datetime import datetime
 import argparse
 import yaml
 from safetensors.torch import save_file
+from safetensors.torch import load_file
 
 from heavyball import ForeachSOAP
 
 # Add project root to sys.path
-project_root = os.path.abspath(os.path.dirname(__file__))
+project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
 
-from meteolibre_model.dataset.dataset_for_diffusion import MeteoFranceDataset
-from meteolibre_model.model.unet_model import Unet
+from meteolibre_model.dataset.dataset_mtg_lightning_7frames import MeteoLibreMapDataset7Frames
 from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import (
     full_image_generation,
     normalize,
@@ -72,19 +72,16 @@ def main(args):
     )
 
     # Initialize dataset
-    dataset = MeteoFranceDataset(
-        data_path=args.data_path,
-        split="train",
-        sequence_length=7,
-        use_lightning=True
+    dataset_6_frames = MeteoLibreMapDataset7Frames(
+        localrepo=params['dataset_path'], cache_size=8, seed=seed + 1, nb_temporal=6
     )
 
     # Initialize DataLoader
     dataloader = DataLoader(
-        dataset,
+        dataset_6_frames,
         batch_size=batch_size,
-        shuffle=True,
-        num_workers=4,
+        shuffle=False,
+        num_workers=8,
         pin_memory=True,
     )
 
@@ -92,23 +89,21 @@ def main(args):
     model_params = params["model"]
     forecast_model = DualUNet3DFiLM(**model_params)
 
-    if not os.path.exists(args.forecast_model_path):
-        raise FileNotFoundError(f"Forecast model checkpoint not found at {args.forecast_model_path}")
-    checkpoint = torch.load(args.forecast_model_path, map_location=device)
-    forecast_model.load_state_dict(checkpoint)
-    forecast_model.to(device)
-    forecast_model.eval()
-    print(f"Loaded forecast model from {args.forecast_model_path}")
+    print("loading forecasting model")
+    state_dict = load_file(args.forecast_model_path)
+
+    forecast_model.load_state_dict(state_dict)
 
     # Initialize correction model
     model_params_corr = params["model_correction"]
     correction_model = DualUNet3DFiLM(**model_params_corr)
 
     # Initialize optimizer
-    optimizer = ForeachSOAP(correction_model.parameters(), lr=learning_rate, foreach=False)
+    #optimizer = ForeachSOAP(correction_model.parameters(), lr=learning_rate, foreach=False)
+    optimizer = torch.optim.AdamW(correction_model.parameters(), lr=learning_rate)
 
     # Prepare for distributed training (only correction_model and optimizer)
-    correction_model, forecast_model, optimizer, dataloader = accelerator.prepare(forecast_model, correction_model, optimizer, dataloader)
+    forecast_model, correction_model, optimizer, dataloader = accelerator.prepare(forecast_model, correction_model, optimizer, dataloader)
 
     global_step = 0
 
@@ -116,6 +111,8 @@ def main(args):
     for epoch in range(num_epochs):
         correction_model.train()
         total_loss = 0.0
+
+        print("start epoch")
 
         progress_bar = tqdm(
             dataloader,
@@ -125,7 +122,8 @@ def main(args):
         for batch in progress_bar:
             with accelerator.accumulate(correction_model):
                 # Perform training step using the correction logic
-                loss = regression_trainer_step(
+                print("start loss compute")
+                loss, loss_sat, loss_kpi = regression_trainer_step(
                     forecast_model,
                     correction_model,
                     batch,
@@ -189,11 +187,10 @@ def main(args):
         save_file(unwrapped_model.state_dict(), final_path)
         print(f"Training complete. Final model saved to {final_path}")
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Train a correction model for weather forecasting using Accelerate.")
-    parser.add_argument("--data_path", type=str, required=True, help="Path to the dataset.")
-    parser.add_argument("--forecast_model_path", type=str, required=True, help="Path to the pre-trained forecast model checkpoint.")
+    parser.add_argument("--data_path", type=str, default="/workspace/dataset/", help="Path to the dataset.")
+    parser.add_argument("--forecast_model_path", type=str, default="/workspace/meteolibre_model/models/models_world_shortcut/model_v1_mtg_world_lightning_shortcut_polynomial_e56.safetensors", help="Path to the pre-trained forecast model checkpoint.")
     parser.add_argument("--save_dir", type=str, default="./correction_models", help="Directory to save model checkpoints.")
 
     args = parser.parse_args()

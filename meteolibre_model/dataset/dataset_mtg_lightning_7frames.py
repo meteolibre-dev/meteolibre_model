@@ -99,9 +99,6 @@ class MeteoLibreMapDataset7Frames(torch.utils.data.Dataset):
         if record["sat_shape"][0] > self.nb_temporal:
             sat_patch_data = sat_patch_data[:self.nb_temporal, :, :, :]
 
-        if record["sat_shape"][0] < self.nb_temporal:
-            return self.__getitem__(random.randint(0, self.__len__()))
-
         if record["lightning_shape"][0] > self.nb_temporal:
             lightning_patch_data = lightning_patch_data[:self.nb_temporal, :, :, :]
 

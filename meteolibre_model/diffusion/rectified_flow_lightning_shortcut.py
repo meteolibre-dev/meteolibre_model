@@ -224,7 +224,7 @@ def trainer_step(
         x0_self = x0[num_emp:]
         x1_self = x1[num_emp:]
         context_info_self = context_info[num_emp:]
-        mask_self = mask_data_sat[num_emp:, :, 4:]
+        mask_self = mask_data_sat[num_emp:, :, model.context_frames:]
 
         # Sample levels uniformly
         levels = list(range(7))  # 0 to 6 for 2^0/128 to 2^6/128=0.5

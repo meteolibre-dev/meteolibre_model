@@ -145,10 +145,11 @@ model_v3_mtg_world_lightning_shortcut:
   model_dir: "models/"
   parametrization: "standard"
   interpolation: "polynomial"
-  batch_size: 128
+  batch_size: 64
   learning_rate: 0.001
   num_epochs: 200
   seed: 42
+  gen_steps: 4
   sigma_noise_input: 0.01
   gradient_clip_value: 1.0
   dataset_path: "/workspace/dataset"
