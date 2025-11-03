@@ -47,7 +47,7 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
     hour, minute = map(int, time_part.split('-'))
     initial_date = datetime(year, month, day, hour, minute) - timedelta(minutes=forecast_steps*10)
 
-    for channel in range(nb_channels):
+    for channel in [0, 11, 16]:
         images = []
 
         vmin=-4 #min(np.min(forecast_channel_data), np.min(true_channel_data))

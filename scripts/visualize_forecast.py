@@ -37,7 +37,7 @@ def create_video(forecast_dir, ground_truth_dir, output_dir, forecast_steps, nb_
     start_forecast_date = initial_date + timedelta(minutes=10)
 
 
-    for channel in range(nb_channels):
+    for channel in [0, 11, 16]: # the 3 main channels VIS, IR, lightning
         images = []
         for step in range(forecast_steps):
             current_date = start_forecast_date + timedelta(minutes=10 * step)
