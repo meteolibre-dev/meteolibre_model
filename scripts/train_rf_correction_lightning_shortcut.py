@@ -52,7 +52,7 @@ def main(args):
     learning_rate = params['learning_rate']
     num_epochs = params['num_epochs']
     gen_steps = params.get('gen_steps', 4)
-    log_interval = params['log_every_n_steps']
+    log_interval = 1 # params['log_every_n_steps']
     save_interval = params['save_every_n_epochs']
     gradient_clip_value = params['gradient_clip_value']
     seed = params['seed']
