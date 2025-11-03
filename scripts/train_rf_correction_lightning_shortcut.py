@@ -154,6 +154,7 @@ def main(args):
 
                 total_loss += loss.item()
                 progress_bar.set_postfix(loss=loss.item())
+                
 
         # Calculate average loss for the epoch
         avg_loss = total_loss / len(dataloader)
@@ -185,16 +186,16 @@ def main(args):
 
                 # Denormalize pred_4
                 pred_sat_4_denorm, pred_light_4_denorm = denormalize(
-                    pred_4_norm[0, :c_sat], pred_4_norm[0, c_sat:], device
+                    pred_4_norm[[0], :c_sat], pred_4_norm[[0], c_sat:], device
                 )
 
                 # Generate pred_5
-                context_sat_gen2 = torch.cat([sample_batch["sat_patch_data"][0, 1:4], pred_sat_4_denorm.unsqueeze(0)], dim=1)
-                context_light_gen2 = torch.cat([sample_batch["lightning_patch_data"][0, 1:4], pred_light_4_denorm.unsqueeze(0)], dim=1)
+                context_sat_gen2 = torch.cat([sample_batch["sat_patch_data"][[0], 1:4], pred_sat_4_denorm.permute(0, 2, 1, 3, 4)], dim=1)
+                context_light_gen2 = torch.cat([sample_batch["lightning_patch_data"][[0], 1:4], pred_light_4_denorm.permute(0, 2, 1, 3, 4)], dim=1)
                 batch_gen2 = {
                     "sat_patch_data": context_sat_gen2,
                     "lightning_patch_data": context_light_gen2,
-                    "spatial_position": sample_batch["spatial_position"][0, 1, :].unsqueeze(0),
+                    "spatial_position": sample_batch["spatial_position"][[0], 1, :],
                 }
                 pred_5_norm, _ = full_image_generation(
                     forecast_model, batch_gen2, steps=gen_steps, device=device, nb_element=1, normalize_input=True
@@ -202,47 +203,40 @@ def main(args):
 
                 # Denormalize pred_5
                 pred_sat_5_denorm, pred_light_5_denorm = denormalize(
-                    pred_5_norm[0, :c_sat], pred_5_norm[0, c_sat:], device
+                    pred_5_norm[[0], :c_sat], pred_5_norm[[0], c_sat:], device
                 )
 
                 # Prepare batch for correction (using first sample)
-                dummy_sat_raw = sample_batch["sat_patch_data"][0, 5:6]  # gt_6 as dummy? Wait, for input it's dummy, but for target it's gt_6
-                dummy_light_raw = sample_batch["lightning_patch_data"][0, 5:6]
-                context_sat_raw = torch.cat([pred_sat_4_denorm.unsqueeze(0), pred_sat_5_denorm.unsqueeze(0)], dim=1)
-                context_light_raw = torch.cat([pred_light_4_denorm.unsqueeze(0), pred_light_5_denorm.unsqueeze(0)], dim=1)
+                dummy_sat_raw = sample_batch["sat_patch_data"][[0], 5:6]  # gt_6 as dummy? Wait, for input it's dummy, but for target it's gt_6
+                dummy_light_raw = sample_batch["lightning_patch_data"][[0], 5:6]
+                context_sat_raw = torch.cat([pred_sat_4_denorm, pred_sat_5_denorm], dim=2)
+                context_light_raw = torch.cat([pred_light_4_denorm, pred_light_5_denorm], dim=2)
+
+
                 batch_gen_corr = {
-                    "sat_patch_data": torch.cat([context_sat_raw, dummy_sat_raw], dim=1),
-                    "lightning_patch_data": torch.cat([context_light_raw, dummy_light_raw], dim=1),
-                    "spatial_position": sample_batch["spatial_position"][0, 4, :].unsqueeze(0),  # position for frame 5
+                    "sat_patch_data": torch.cat([context_sat_raw.permute(0, 2, 1, 3, 4), dummy_sat_raw], dim=1),
+                    "lightning_patch_data": torch.cat([context_light_raw.permute(0, 2, 1, 3, 4), dummy_light_raw], dim=1),
+                    "spatial_position": sample_batch["spatial_position"][[0], 1, :],  # position for frame 5
                 }
-
-                # Generate correction
-                corrected_norm, target_norm = full_correction_generation(
-                    correction_model, batch_gen_corr, steps=gen_steps, device=device, nb_element=1, normalize_input=False  # input is raw, but function normalizes internally? Wait, adjust.
-                )
-
-                # Since full_correction_generation expects raw? No, it has normalize_input=True by default, but in training we pass raw and it normalizes inside trainer_step, but for gen, need to match.
-                # Actually, in full_correction_generation, if normalize_input=True, it normalizes the input batch_data.
-
-                # But in this case, since batch_gen_corr is raw, set normalize_input=True to normalize inside.
 
                 corrected_norm, target_norm = full_correction_generation(
                     correction_model, batch_gen_corr, steps=gen_steps, device=device, nb_element=1, normalize_input=True
                 )
 
                 # Denormalize for plotting
-                corrected_sat, corrected_light = denormalize(corrected_norm[0, :c_sat], corrected_norm[0, c_sat:], device)
-                target_sat, target_light = denormalize(target_norm[0, :c_sat], target_norm[0, c_sat:], device)
-                pred5_sat, _ = denormalize(pred_5_norm[0, :c_sat], pred_5_norm[0, c_sat:], device)
+                corrected_sat, corrected_light = denormalize(corrected_norm[[0], :c_sat], corrected_norm[[0], c_sat:], device)
+                target_sat, target_light = denormalize(target_norm[[0], :c_sat], target_norm[[0], c_sat:], device)
+                pred5_sat, _ = denormalize(pred_5_norm[[0], :c_sat], pred_5_norm[[0], c_sat:], device)
+
 
                 # Move to CPU and plot (simple example: plot first channel of sat)
                 import matplotlib.pyplot as plt
                 fig, axs = plt.subplots(1, 3, figsize=(15, 5))
-                axs[0].imshow(pred5_sat[0].cpu().numpy(), cmap='gray')  # pred_5 channel 0
+                axs[0].imshow(pred5_sat[0, 11, 0].cpu().numpy(), cmap='gray')  # pred_5 channel 11
                 axs[0].set_title('Predicted Frame 5')
-                axs[1].imshow(corrected_sat[0].cpu().numpy(), cmap='gray')
+                axs[1].imshow(corrected_sat[0, 11, 0].cpu().numpy(), cmap='gray')
                 axs[1].set_title('Corrected Frame 6')
-                axs[2].imshow(target_sat[0].cpu().numpy(), cmap='gray')
+                axs[2].imshow(target_sat[0, 11, 0].cpu().numpy(), cmap='gray')
                 axs[2].set_title('Ground Truth Frame 6')
 
                 viz_dir = os.path.join(args.save_dir, "visualizations")
