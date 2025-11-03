@@ -10,9 +10,11 @@ This script supports multiple interpolation schedules:
 import torch
 import math
 import random
+
 try:
     import matplotlib
-    matplotlib.use('Agg')  # Use non-interactive backend to avoid display issues
+
+    matplotlib.use("Agg")  # Use non-interactive backend to avoid display issues
     import matplotlib.pyplot as plt
 except ImportError:
     plt = None  # If not available, set to None
@@ -37,15 +39,25 @@ def normalize(sat_data, lightning_data, device):
     """
     sat_data = (
         sat_data
-        - MEAN_CHANNEL_WORLD.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
-    ) / STD_CHANNEL_WORLD.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
+        - MEAN_CHANNEL_WORLD.unsqueeze(0)
+        .unsqueeze(-1)
+        .unsqueeze(-1)
+        .unsqueeze(-1)
+        .to(device)
+    ) / STD_CHANNEL_WORLD.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(
+        device
+    )
 
     # Clamp to prevent extreme values
     sat_data = sat_data.clamp(CLIP_MIN, 4)
 
     lightning_data = (
         lightning_data
-        - MEAN_LIGHTNING.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
+        - MEAN_LIGHTNING.unsqueeze(0)
+        .unsqueeze(-1)
+        .unsqueeze(-1)
+        .unsqueeze(-1)
+        .to(device)
     ) / STD_LIGHTNING.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
 
     # Clamp to prevent extreme values
@@ -58,17 +70,17 @@ def denormalize(sat_data, lightning_data, device):
     """
     Denormalize the batch data using precomputed mean and std.
     """
-    sat_data = (
-        sat_data.to(device)
-        * STD_CHANNEL_WORLD.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
-        + MEAN_CHANNEL_WORLD.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
-    )
+    sat_data = sat_data.to(device) * STD_CHANNEL_WORLD.unsqueeze(0).unsqueeze(
+        -1
+    ).unsqueeze(-1).unsqueeze(-1).to(device) + MEAN_CHANNEL_WORLD.unsqueeze(
+        0
+    ).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
 
-    lightning_data = (
-        lightning_data.to(device)
-        * STD_LIGHTNING.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
-        + MEAN_LIGHTNING.unsqueeze(0).unsqueeze(-1).unsqueeze(-1).unsqueeze(-1).to(device)
-    )
+    lightning_data = lightning_data.to(device) * STD_LIGHTNING.unsqueeze(0).unsqueeze(
+        -1
+    ).unsqueeze(-1).unsqueeze(-1).to(device) + MEAN_LIGHTNING.unsqueeze(0).unsqueeze(
+        -1
+    ).unsqueeze(-1).unsqueeze(-1).to(device)
 
     return sat_data, lightning_data
 
@@ -83,13 +95,15 @@ def get_x_t_rf(x0, x1, t, interpolation="linear"):
         return (1 - t) * x0 + t * x1
     elif interpolation == "polynomial":
         u = 1 - t
-        alpha = u ** 3
+        alpha = u**3
         return alpha * x0 + (1 - alpha) * x1
     else:
         raise ValueError(f"Unknown interpolation schedule: {interpolation}")
 
 
-def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", interpolation="linear"):
+def trainer_step(
+    model, batch, device, sigma=0.0, parametrization="standard", interpolation="linear"
+):
     """
     Performs a single training step for the shortcut rectified flow model.
 
@@ -105,7 +119,9 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
         The loss value for the training step, loss_sat, loss_lightning.
     """
     if parametrization != "standard":
-        raise ValueError("Shortcut adaptation currently assumes 'standard' parametrization.")
+        raise ValueError(
+            "Shortcut adaptation currently assumes 'standard' parametrization."
+        )
 
     # Permute to (B, C, T, H, W)
     sat_data = batch["sat_patch_data"].permute(0, 2, 1, 3, 4)
@@ -121,12 +137,15 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
 
     batch_data = torch.concat([sat_data, lightning_data], dim=1)
 
-    x_context = batch_data[:, :, :4]  # Context frames
+    x_context = batch_data[:, :, : model.context_frames]  # Context frames
     if sigma > 0:
         x_context += torch.randn_like(x_context) * sigma
 
     # Always forecast the residual
-    x0 = batch_data[:, :, 4:] - batch_data[:, :, 3:4]  # Residual (data)
+    x0 = (
+        batch_data[:, :, model.context_frames :]
+        - batch_data[:, :, (model.context_frames - 1) : model.context_frames]
+    )  # Residual (data)
 
     context_info = batch["spatial_position"]
 
@@ -146,7 +165,7 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
         x0_emp = x0[:num_emp]
         x1_emp = x1[:num_emp]
         context_info_emp = context_info[:num_emp]
-        mask_emp = mask_data_sat[:num_emp, :, 4:]
+        mask_emp = mask_data_sat[:num_emp, :, model.context_frames :]
 
         t_emp = torch.rand(num_emp, device=device)
         d_emp = torch.zeros(num_emp, device=device)
@@ -159,13 +178,14 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
         elif interpolation == "polynomial":
             u_emp = 1 - t_emp
             u_exp_emp = u_emp.view(num_emp, 1, 1, 1, 1)
-            target_emp = 3 * (u_exp_emp ** 2) * (x1_emp - x0_emp)
+            target_emp = 3 * (u_exp_emp**2) * (x1_emp - x0_emp)
         else:
             raise ValueError(f"Unknown interpolation schedule: {interpolation}")
 
-
         # Model input: concatenate context and x_t
-        model_input_emp = torch.cat([x_context_emp, xt_emp], dim=2)  # (num_emp, C, 5, H, W)
+        model_input_emp = torch.cat(
+            [x_context_emp, xt_emp], dim=2
+        )  # (num_emp, C, 5, H, W)
 
         context_global_emp = torch.cat(
             [context_info_emp, t_emp.unsqueeze(1), d_emp.unsqueeze(1)], dim=1
@@ -179,17 +199,19 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
 
         # Predict
         sat_pred_emp, lightning_pred_emp = model(
-            model_input_sat_emp.float(), model_input_lightning_emp.float(), context_global_emp.float()
+            model_input_sat_emp.float(),
+            model_input_lightning_emp.float(),
+            context_global_emp.float(),
         )
 
         # Loss: MSE between predicted and target
         loss_sat_emp = torch.nn.functional.mse_loss(
-            sat_pred_emp[:, :, 4:][mask_emp],
+            sat_pred_emp[:, :, model.context_frames :][mask_emp],
             target_sat_emp[mask_emp].float(),
         )
 
         loss_lightning_emp = torch.nn.functional.mse_loss(
-            lightning_pred_emp[:, :, 4:],
+            lightning_pred_emp[:, :, model.context_frames :],
             target_lightning_emp.float(),
         )
 
@@ -213,7 +235,7 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
 
         for ii in range(num_self):
             l = random.choice(levels)
-            dd = (2 ** l) / SHORTCUT_M
+            dd = (2**l) / SHORTCUT_M
             max_k = math.floor(1.0 / dd)
             k = random.randint(2, max_k)
             tt = k * dd
@@ -234,10 +256,12 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
         model_input_lightning_d = model_input_d[:, c_sat : (c_sat + c_lightning)]
 
         sat_st, lightning_st = model(
-            model_input_sat_d.float(), model_input_lightning_d.float(), context_global_d.float()
+            model_input_sat_d.float(),
+            model_input_lightning_d.float(),
+            context_global_d.float(),
         )
 
-        st = torch.cat([sat_st, lightning_st], dim=1)[:, :, 4:]
+        st = torch.cat([sat_st, lightning_st], dim=1)[:, :, model.context_frames :]
 
         # x_mid = xt - st * d (direction towards data, decreasing t)
         d_exp_self = d_self.view(num_self, 1, 1, 1, 1)
@@ -261,10 +285,14 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
         model_input_lightning_mid = model_input_mid[:, c_sat : (c_sat + c_lightning)]
 
         sat_st_mid, lightning_st_mid = model(
-            model_input_sat_mid.float(), model_input_lightning_mid.float(), context_global_mid.float()
+            model_input_sat_mid.float(),
+            model_input_lightning_mid.float(),
+            context_global_mid.float(),
         )
 
-        st_mid = torch.cat([sat_st_mid, lightning_st_mid], dim=1)[:, :, 4:]
+        st_mid = torch.cat([sat_st_mid, lightning_st_mid], dim=1)[
+            :, :, model.context_frames :
+        ]
 
         # starget = detach( (st + st_mid) / 2 )
         starget = ((st + st_mid) / 2).detach()
@@ -277,10 +305,14 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
 
         # Use same model_input_d (since xt unchanged)
         sat_pred_2d, lightning_pred_2d = model(
-            model_input_sat_d.float(), model_input_lightning_d.float(), context_global_2d.float()
+            model_input_sat_d.float(),
+            model_input_lightning_d.float(),
+            context_global_2d.float(),
         )
 
-        pred_2d = torch.cat([sat_pred_2d, lightning_pred_2d], dim=1)[:, :, 4:]
+        pred_2d = torch.cat([sat_pred_2d, lightning_pred_2d], dim=1)[
+            :, :, model.context_frames :
+        ]
 
         # Split targets and preds for loss
         starget_sat = starget[:, :c_sat]
@@ -303,11 +335,17 @@ def trainer_step(model, batch, device, sigma=0.0, parametrization="standard", in
         loss_sat += loss_sat_self
         loss_lightning += loss_lightning_self
 
-    return loss_sat + 1. * loss_lightning, loss_sat, loss_lightning
+    return loss_sat + 1.0 * loss_lightning, loss_sat, loss_lightning
 
 
 def full_image_generation(
-    model, batch, steps=128, device="cuda", parametrization="standard", nb_element=1, normalize_input=True
+    model,
+    batch,
+    steps=128,
+    device="cuda",
+    parametrization="standard",
+    nb_element=1,
+    normalize_input=True,
 ):
     """
     Generates full images using shortcut rectified flow (simple Euler sampling for flexibility in steps).
@@ -325,7 +363,9 @@ def full_image_generation(
         Generated images.
     """
     if parametrization != "standard":
-        raise ValueError("Shortcut adaptation currently assumes 'standard' parametrization.")
+        raise ValueError(
+            "Shortcut adaptation currently assumes 'standard' parametrization."
+        )
 
     model.eval()
     with torch.no_grad():
@@ -348,9 +388,11 @@ def full_image_generation(
         batch_data = torch.concat([sat_data, lightning_data], dim=1)
         batch_data = batch_data[0:nb_element]
 
-        x_context = batch_data[:, :, :4]  # Context frames
+        x_context = batch_data[:, :, : model.context_frames]  # Context frames
 
-        last_context = x_context[:, :, 3:4]  # (batch_size, nb_channel, 1, h, w)
+        last_context = x_context[
+            :, :, (model.context_frames - 1) : model.context_frames
+        ]  # (batch_size, nb_channel, 1, h, w)
 
         context_info = batch["spatial_position"].to(device)[0:nb_element, :]
 
@@ -379,10 +421,14 @@ def full_image_generation(
 
             # Predict
             sat_pred, lightning_pred = model(
-                model_input_sat.float(), model_input_lightning.float(), context_global.float()
+                model_input_sat.float(),
+                model_input_lightning.float(),
+                context_global.float(),
             )
 
-            pred = torch.cat([sat_pred, lightning_pred], dim=1)[:, :, 4:]
+            pred = torch.cat([sat_pred, lightning_pred], dim=1)[
+                :, :, model.context_frames :
+            ]
 
             # Update: x_t = x_t - pred * d (towards data)
             x_t = x_t - pred * d_const
@@ -394,12 +440,12 @@ def full_image_generation(
             t_val -= d_const
 
     # Always add back the last context since always forecasting residual
-    last_context = x_context[:, :, 3:4]  # (batch_size, nb_channel, 1, h, w)
+    last_context = x_context[
+        :, :, (model.context_frames - 1) : model.context_frames
+    ]  # (batch_size, nb_channel, 1, h, w)
     x_t = x_t + last_context.expand(-1, -1, 1, -1, -1)
-    
-    x_t = torch.where(
-        last_context == CLIP_MIN, last_context, x_t
-    )
+
+    x_t = torch.where(last_context == CLIP_MIN, last_context, x_t)
 
     model.train()
-    return x_t.cpu(), batch_data[:, :, 4:]
+    return x_t.cpu(), batch_data[:, :, model.context_frames :]
