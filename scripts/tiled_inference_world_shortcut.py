@@ -17,7 +17,7 @@ sys.path.insert(0, project_root)
 config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
 with open(config_path) as f:
     config = yaml.safe_load(f)
-params = config["model_v2_mtg_world_lightning_shortcut"]
+params = config["model_v1_mtg_world_lightning_shortcut"]
 
 # Constants for coordinates (will be set from HDF5 file)
 from meteolibre_model.models.unet3d_film_dual import DualUNet3DFiLM
@@ -267,7 +267,7 @@ def main():
     date_part, time_part = date_str.split("_")[0], date_str.split("_")[1]
     year, month, day = map(int, date_part.split("-"))
     hour, minute = map(int, time_part.split("-"))
-    initial_date = datetime(year, month, day, hour, minute) - timedelta(minutes=17 * 10)
+    initial_date = datetime(year, month, day, hour, minute) - timedelta(minutes=18 * 10)
 
     if num_frames < args.context_frames:
         raise ValueError(

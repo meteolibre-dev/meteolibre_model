@@ -69,11 +69,12 @@ def trainer_step_autoregressive(model, batch, device, sigma=0.0, parametrization
         ], dim=1)
 
         # Add a dummy 5th frame for the function signature
-        dummy_frame = torch.zeros_like(batch["sat_patch_data"][:, 0:1])
+        dummy_frame_sat = torch.zeros_like(batch["sat_patch_data"][:, 0:1])
+        dummy_frame_lightning = torch.zeros_like(batch["lightning_patch_data"][:, 0:1])
 
         batch_gen2 = {
-            "sat_patch_data": torch.cat([context_sat_gen2, dummy_frame], dim=1),
-            "lightning_patch_data": torch.cat([context_light_gen2, dummy_frame], dim=1),
+            "sat_patch_data": torch.cat([context_sat_gen2, dummy_frame_sat], dim=1),
+            "lightning_patch_data": torch.cat([context_light_gen2, dummy_frame_lightning], dim=1),
             "spatial_position": batch["spatial_position"][:, 1, :], # Use second row for frame 6
         }
 

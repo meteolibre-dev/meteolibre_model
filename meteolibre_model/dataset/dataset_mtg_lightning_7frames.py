@@ -97,10 +97,13 @@ class MeteoLibreMapDataset7Frames(torch.utils.data.Dataset):
 
         # Ensure we have exactly self.nb_temporal frames
         if record["sat_shape"][0] > self.nb_temporal:
-            sat_patch_data = sat_patch_data[-self.nb_temporal:, :, :, :]
+            sat_patch_data = sat_patch_data[:self.nb_temporal, :, :, :]
+
+        if record["sat_shape"][0] < self.nb_temporal:
+            return self.__getitem__(random.randint(0, self.__len__()))
 
         if record["lightning_shape"][0] > self.nb_temporal:
-            lightning_patch_data = lightning_patch_data[-self.nb_temporal:, :, :, :]
+            lightning_patch_data = lightning_patch_data[:self.nb_temporal, :, :, :]
 
         # Retrieve longitude and latitude for sun position calculation
         long = record["lon"] # longitude
@@ -124,11 +127,13 @@ class MeteoLibreMapDataset7Frames(torch.utils.data.Dataset):
             [pos7["azimuth"], pos7["altitude"], lat_norm],
         ]
 
-        return {
+        batch_dict = {
             "sat_patch_data": torch.from_numpy(sat_patch_data),
             "lightning_patch_data": torch.from_numpy(lightning_patch_data),
             "spatial_position": torch.tensor(spatial_position_data),
         }
+
+        return batch_dict
 
     def __getitem__(self, index: int) -> dict:
         if not getattr(self, "worker_initialized", False):

@@ -108,10 +108,10 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
 
         # in case of bad formatting
         if record["sat_shape"][0] > 5:
-            sat_patch_data = sat_patch_data[-5:, :, :, :]
+            sat_patch_data = sat_patch_data[:5, :, :, :]
 
         if record["lightning_shape"][0] > 5:
-            lightning_patch_data = lightning_patch_data[-5:, :, :, :]
+            lightning_patch_data = lightning_patch_data[:5, :, :, :]
 
         # now we try to retrieve the longitude latitude of the patch to get the sun orientation on the patches
         long = record["lon"] # longitude
@@ -119,13 +119,17 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
 
         result = get_position(date, long, lat)
 
-        return {
+        batch_dict = {
             "sat_patch_data": torch.from_numpy(sat_patch_data),
             "lightning_patch_data": torch.from_numpy(lightning_patch_data),
             "spatial_position": torch.tensor(
                 [result["azimuth"], result["altitude"], lat / 10.0]
             ),
         }
+
+
+
+        return batch_dict
 
     def __getitem__(self, index: int) -> dict:
         if not getattr(self, "worker_initialized", False):

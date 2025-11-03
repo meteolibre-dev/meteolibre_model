@@ -86,23 +86,32 @@ def main():
         localrepo=params['dataset_path'], cache_size=4, seed=seed, nb_temporal=5
     )
     dataset_7_frames = MeteoLibreMapDataset7Frames(
-        localrepo=params['dataset_path'], cache_size=4, seed=seed, nb_temporal=7
+        localrepo=params['dataset_path'], cache_size=4, seed=seed + 1, nb_temporal=7
     )
 
     # Initialize DataLoaders
     dataloader_5_frames = DataLoader(
-        dataset_5_frames, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True
+        dataset_5_frames, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True
     )
     dataloader_7_frames = DataLoader(
-        dataset_7_frames, batch_size=batch_size, shuffle=False, num_workers=2, pin_memory=True
+        dataset_7_frames, batch_size=batch_size, shuffle=False, num_workers=1, pin_memory=True
     )
 
     # Initialize model
     model_params = params["model"]
     model = DualUNet3DFiLM(**model_params)
 
+    print("loading model")
+    model_path = "/workspace/meteolibre_model/models/models_world_shortcut/model_v1_mtg_world_lightning_shortcut_polynomial_e56.safetensors"
+    state_dict = load_file(model_path)
+
+    model.load_state_dict(state_dict)
+
+    learning_rate = 0.0001
+
     # Initialize optimizer
-    optimizer = ForeachSOAP(model.parameters(), lr=learning_rate, foreach=False)
+    # optimizer = ForeachSOAP(model.parameters(), lr=learning_rate, foreach=False)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate)
 
     # Prepare for distributed training
     model, optimizer, dataloader_5, dataloader_7 = accelerator.prepare(
@@ -110,6 +119,7 @@ def main():
     )
 
     global_step = 0
+    num_epochs = 10
 
     # Training loop
     for epoch in range(num_epochs):
@@ -184,8 +194,9 @@ def main():
 
     accelerator.wait_for_everyone()
     if accelerator.is_main_process:
-        final_save_path = "meteolibre_model_autoregressive_final.pth"
-        torch.save(model.state_dict(), final_save_path)
+        unwrapped_model = accelerator.unwrap_model(model)
+        final_save_path = "meteolibre_model_autoregressive_final.safetensors"
+        save_file(unwrapped_model.state_dict(), final_save_path)
         print(f"Training complete. Model saved to {final_save_path}")
 
 if __name__ == "__main__":
