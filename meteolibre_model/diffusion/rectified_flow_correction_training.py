@@ -70,13 +70,14 @@ def regression_trainer_step(forecast_model, correction_model, batch, device, gen
         )
 
         # Generate prediction for frame 5
-        context_sat_gen2 = torch.cat([batch["sat_patch_data"][:, 1:4], pred_sat_4_denorm], dim=1)
-        context_light_gen2 = torch.cat([batch["lightning_patch_data"][:, 1:4], pred_light_4_denorm], dim=1)
+        context_sat_gen2 = torch.cat([batch["sat_patch_data"][:, 1:4], pred_sat_4_denorm.permute(0, 2, 1, 3, 4)], dim=1)
+        context_light_gen2 = torch.cat([batch["lightning_patch_data"][:, 1:4], pred_light_4_denorm.permute(0, 2, 1, 3, 4)], dim=1)
         batch_gen2 = {
             "sat_patch_data": context_sat_gen2,
             "lightning_patch_data": context_light_gen2,
             "spatial_position": batch["spatial_position"][:, 1, :],
         }
+
         pred_5_norm, _ = full_image_generation(
             forecast_model, batch_gen2, steps=generation_steps, device=device, nb_element=b, normalize_input=True
         )
@@ -89,8 +90,8 @@ def regression_trainer_step(forecast_model, correction_model, batch, device, gen
 
     # --- 3. Correction Model Training Step ---
     # Construct the input for the correction model: [pred_4, pred_5, gt_5] all raw
-    context_sat_raw = torch.cat([pred_sat_4_denorm, pred_sat_5_denorm], dim=1)  # (B, 2, C_sat, H, W) raw
-    context_light_raw = torch.cat([pred_light_4_denorm, pred_light_5_denorm], dim=1)  # (B, 2, C_light, H, W) raw
+    context_sat_raw = torch.cat([pred_sat_4_denorm.permute(0, 2, 1, 3, 4), pred_sat_5_denorm.permute(0, 2, 1, 3, 4)], dim=1)  # (B, 2, C_sat, H, W) raw
+    context_light_raw = torch.cat([pred_light_4_denorm.permute(0, 2, 1, 3, 4), pred_light_5_denorm.permute(0, 2, 1, 3, 4)], dim=1)  # (B, 2, C_light, H, W) raw
     dummy_sat_raw = batch["sat_patch_data"][:, 5:6]  # (B, 1, C_sat, H, W) raw
     dummy_light_raw = batch["lightning_patch_data"][:, 5:6]  # (B, 1, C_light, H, W) raw
 
