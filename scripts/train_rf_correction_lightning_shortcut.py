@@ -60,7 +60,7 @@ def main(args):
     id_run = str(datetime.utcnow())[:19]
     hps = {
         "batch_size": batch_size,
-        "learning_rate": learning_rate,
+        "learning_rate": learning_rate / 10.,
         "gen_steps": gen_steps,
     }
 
@@ -97,6 +97,11 @@ def main(args):
     # Initialize correction model
     model_params_corr = params["model_correction"]
     correction_model = DualUNet3DFiLM(**model_params_corr)
+
+    print("loading forecasting model")
+    state_dict = load_file(args.forecast_model_path)
+
+    correction_model.load_state_dict(state_dict)
 
     # Initialize optimizer
     #optimizer = ForeachSOAP(correction_model.parameters(), lr=learning_rate, foreach=False)

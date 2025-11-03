@@ -171,7 +171,7 @@ model_v3_mtg_world_lightning_shortcut:
     sat_out_channels: 16
     kpi_out_channels: 1
     additional_channels: 3
-    features: [16, 32, 64]
+    features: [32, 64, 128, 256]
     context_dim: 5
     embedding_dim: 128
     context_frames: 2
