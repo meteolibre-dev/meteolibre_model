@@ -102,7 +102,7 @@ def get_x_t_rf(x0, x1, t, interpolation="linear"):
 
 
 def trainer_step(
-    model, batch, device, sigma=0.0, parametrization="standard", interpolation="linear"
+    model, batch, device, sigma=0.0, parametrization="standard", interpolation="linear", use_residual=True
 ):
     """
     Performs a single training step for the shortcut rectified flow model.
@@ -141,11 +141,14 @@ def trainer_step(
     if sigma > 0:
         x_context += torch.randn_like(x_context) * sigma
 
-    # Always forecast the residual
-    x0 = (
-        batch_data[:, :, model.context_frames :]
-        - batch_data[:, :, (model.context_frames - 1) : model.context_frames]
-    )  # Residual (data)
+        if use_residual:
+        # Forecast the residual
+        x0 = (
+            batch_data[:, :, model.context_frames :]
+            - batch_data[:, :, (model.context_frames - 1) : model.context_frames]
+        )  # Residual (data)
+    else:
+        x0 = batch_data[:, :, model.context_frames :]
 
     context_info = batch["spatial_position"]
 
@@ -346,6 +349,7 @@ def full_image_generation(
     parametrization="standard",
     nb_element=1,
     normalize_input=True,
+    use_residual=True,
 ):
     """
     Generates full images using shortcut rectified flow (simple Euler sampling for flexibility in steps).
@@ -441,13 +445,14 @@ def full_image_generation(
             # Update t
             t_val -= d_const
 
-    # Always add back the last context since always forecasting residual
-    last_context = x_context[
-        :, :, (model.context_frames - 1) : model.context_frames
-    ]  # (batch_size, nb_channel, 1, h, w)
-    x_t = x_t + last_context.expand(-1, -1, 1, -1, -1)
+        if use_residual:
+        # Add back the last context since forecasting residual
+        last_context = x_context[
+            :, :, (model.context_frames - 1) : model.context_frames
+        ]  # (batch_size, nb_channel, 1, h, w)
+        x_t = x_t + last_context.expand(-1, -1, 1, -1, -1)
 
-    x_t = torch.where(last_context == CLIP_MIN, last_context, x_t)
+        x_t = torch.where(last_context == CLIP_MIN, last_context, x_t)
 
     model.train()
     generated, target = x_t.cpu(), batch_data[:, :, model.context_frames :].cpu()
