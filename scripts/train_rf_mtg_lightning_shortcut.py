@@ -17,8 +17,6 @@ import yaml
 from accelerate.utils import DistributedDataParallelKwargs
 from safetensors.torch import save_file
 
-from safetensors.torch import load_file
-
 # custom optimizer TO REMOVE ?
 from heavyball import ForeachSOAP, ForeachMuon
 
