@@ -25,7 +25,8 @@ c_sat = params['model']['sat_in_channels']
 c_lightning = params['model']['kpi_in_channels']
 nb_channels = c_sat + c_lightning
 
-def create_video(forecast_dir, data_file, output_dir, forecast_steps):
+def create_video(forecast_dir, data_file, output_dir, forecast_steps, use_region=False, 
+                 region_start_row=None, region_end_row=None, region_start_col=None, region_end_col=None):
     """
     Generates videos comparing forecasts to ground truth for each channel.
     """
@@ -36,6 +37,13 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
         sat_data = hf['sat_data'][:]
         lightning_data = hf['lightning_data'][:]
         num_frames = hf.attrs['num_frames']
+
+    # Apply region focus if specified
+    if use_region and all(x is not None for x in [region_start_row, region_end_row, region_start_col, region_end_col]):
+        print(f"Focusing on region: rows {region_start_row}:{region_end_row}, cols {region_start_col}:{region_end_col}")
+        # Crop the data arrays
+        sat_data = sat_data[:, region_start_row:region_end_row, region_start_col:region_end_col]
+        lightning_data = lightning_data[:, region_start_row:region_end_row, region_start_col:region_end_col]
 
     # Parse initial_date from filename
     filename = os.path.basename(data_file)
@@ -66,6 +74,12 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
             forecast_data = np.load(forecast_file)
             sat_forecast = forecast_data['sat_forecast']
             lightning_forecast = forecast_data['lightning_forecast']
+            
+            # Apply region focus to forecast data if specified
+            if use_region and all(x is not None for x in [region_start_row, region_end_row, region_start_col, region_end_col]):
+                sat_forecast = sat_forecast[:, region_start_row:region_end_row, region_start_col:region_end_col]
+                lightning_forecast = lightning_forecast[:, region_start_row:region_end_row, region_start_col:region_end_col]
+            
             forecast_full = np.concatenate([sat_forecast, lightning_forecast], axis=0)  # (nb_channels, H, W)
             forecast_channel_data = forecast_full[channel]
 
@@ -135,10 +149,41 @@ def main():
         default=18,
         help="Number of forecast steps to visualize.",
     )
+    parser.add_argument(
+        "--use_region",
+        action="store_true",
+        help="Enable focus on a specific region of the image.",
+    )
+    parser.add_argument(
+        "--region_start_row",
+        type=int,
+        default=None,
+        help="Start row index for region focus (inclusive).",
+    )
+    parser.add_argument(
+        "--region_end_row",
+        type=int,
+        default=None,
+        help="End row index for region focus (exclusive).",
+    )
+    parser.add_argument(
+        "--region_start_col",
+        type=int,
+        default=None,
+        help="Start column index for region focus (inclusive).",
+    )
+    parser.add_argument(
+        "--region_end_col",
+        type=int,
+        default=None,
+        help="End column index for region focus (exclusive).",
+    )
     
     args = parser.parse_args()
     
-    create_video(args.forecast_dir, args.data_file, args.output_dir, args.forecast_steps)
+    create_video(args.forecast_dir, args.data_file, args.output_dir, args.forecast_steps,
+                 args.use_region, args.region_start_row, args.region_end_row,
+                 args.region_start_col, args.region_end_col)
 
 if __name__ == "__main__":
     main()
