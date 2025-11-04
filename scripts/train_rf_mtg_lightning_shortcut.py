@@ -60,7 +60,7 @@ def main():
     learning_rate = params['learning_rate']
     num_epochs = params['num_epochs']
     seed = params['seed']
-    residual = params.get(bool(['residual']), True)
+    residual = bool(params.get('residual', True))
     sigma_noise_input = params['sigma_noise_input']
     gradient_clip_value = params['gradient_clip_value']
     id_run = str(datetime.utcnow())[:19]
@@ -68,6 +68,7 @@ def main():
     set_seed(seed)
 
     hps = {"batch_size": batch_size, "learning_rate": learning_rate}
+    print("residual is :", residual)
 
     accelerator.init_trackers(
         "lightning_shortcut-eps-prediction-training-rectified-flow_" + id_run, config=hps
