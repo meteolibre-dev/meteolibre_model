@@ -42,8 +42,10 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps, use_region
     if use_region and all(x is not None for x in [region_start_row, region_end_row, region_start_col, region_end_col]):
         print(f"Focusing on region: rows {region_start_row}:{region_end_row}, cols {region_start_col}:{region_end_col}")
         # Crop the data arrays
-        sat_data = sat_data[:, region_start_row:region_end_row, region_start_col:region_end_col]
-        lightning_data = lightning_data[:, region_start_row:region_end_row, region_start_col:region_end_col]
+        print(sat_data.shape)
+
+        sat_data = sat_data[:, :, region_start_row:region_end_row, region_start_col:region_end_col]
+        lightning_data = lightning_data[:, :, region_start_row:region_end_row, region_start_col:region_end_col]
 
     # Parse initial_date from filename
     filename = os.path.basename(data_file)
@@ -98,7 +100,7 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps, use_region
                 vmax = max(np.max(forecast_channel_data), np.max(true_channel_data)) + 1.0
 
             # Generate a side-by-side comparison image
-            fig, axes = plt.subplots(1, 2, figsize=(15, 6))
+            fig, axes = plt.subplots(1, 2, figsize=(15, 5.5))
             im0 = axes[0].imshow(forecast_channel_data, cmap='plasma', vmin=vmin, vmax=vmax)
             axes[0].set_title(f'Forecast - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
             axes[0].axis('off')
