@@ -53,6 +53,7 @@ def tiled_inference(
     epsg,
     transformer,
     batch_size=64,
+    use_residual=True,
 ):
     model.eval()
     model.to(device)
@@ -157,9 +158,9 @@ def tiled_inference(
         averaged_pred = aggregated_pred / overlap_counts
         x_t_full_res = x_t_full_res - averaged_pred * d_const
         x_t_full_res = x_t_full_res.clamp(-7, 7)
-    # Always add back the last context since always forecasting residual
-    last_context_frame = initial_context[:, :, 3:4]
-    x_t_full_res = x_t_full_res + last_context_frame
+        last_context_frame = initial_context[:, :, 3:4]
+    if use_residual:
+        x_t_full_res = x_t_full_res + last_context_frame
     # Clamp results to be within the expected normalized range
     x_t_full_res = torch.where(
         last_context_frame == CLIP_MIN, last_context_frame, x_t_full_res
@@ -294,11 +295,16 @@ def main():
     # Concat back
     current_high_res_context = torch.cat([sat_data, lightning_data], dim=1)
     # Autoregressive Generation Loop
+
+    use_residual = params.get("residual", True)
+
     for step_idx in range(args.forecast_steps):
         print(f"Autoregressive step {step_idx + 1}/{args.forecast_steps}")
         # Compute the date for the predicted frame
         prediction_date = initial_date + timedelta(minutes=10 * (step_idx + 1))
         # Perform tiled inference for the next frame
+        
+        
         generated_frame = tiled_inference(
             model=model,
             initial_context=current_high_res_context,
@@ -312,6 +318,7 @@ def main():
             transform=transform,
             epsg=epsg,
             transformer=transformer,
+            use_residual=use_residual,
         )  # Shape: (1, nb_channels, 1, H_big, W_big)
         # Split and denormalize
         sat_generated = generated_frame[:, :c_sat]

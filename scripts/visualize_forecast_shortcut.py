@@ -55,7 +55,6 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps):
 
         for step in range(forecast_steps):
 
-            
             prediction_date = initial_date + timedelta(minutes=10 * (step + 1))
 
             # Load forecast data
