@@ -115,7 +115,12 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
             writer.add_scalar('Reward/model_reward', current_reward, t+1)
             print(f"Iter {t+1}/{T}: Model reward {current_reward:.4f}")
         
-        print(f"Iter {t+1}/{T}: Avg reward {rewards.mean().item():.4f}, Std {rewards.std().item():.4f}")
+        # Log min/max of perturbation rewards
+        if writer is not None:
+            writer.add_scalar('Reward/min_perturbation', rewards.min().item(), t+1)
+            writer.add_scalar('Reward/max_perturbation', rewards.max().item(), t+1)
+        
+        print(f"Iter {t+1}/{T}: Avg reward {rewards.mean().item():.4f}, Std {rewards.std().item():.4f}, Min {rewards.min().item():.4f}, Max {rewards.max().item():.4f}")
     
     # Restore if needed or save fine-tuned
     if save_path:
