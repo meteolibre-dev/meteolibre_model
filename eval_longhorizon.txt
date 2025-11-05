@@ -17,19 +17,26 @@ Horizon 3:
   sat_mae: 0.094628                                                                                                                        
   light_mse: 0.003682                                                                                                                      
   light_mae: 0.045976                                                                                                                      
-                                                                                                                                           
-Horizon 6:                                                                                                                                 
-  sat_mse: 0.063369                                                                                                                        
-  sat_mae: 0.151370                                                                                                                        
-  light_mse: 0.003969                                                                                                                      
-  light_mae: 0.047991                                                                                                                      
-                                                                                                                                           
-Horizon 12:                                                                                                                                
-  sat_mse: 0.181398                                                                                                                        
-  sat_mae: 0.267318                                                                                                                        
-  light_mse: 0.005412
-  light_mae: 0.055832
+                     
+Horizon 6:
+  sat_mse: 0.059759
+  sat_mae: 0.145789
+  light_mse: 0.003729
+  light_mae: 0.046455
 
+Horizon 12:
+  sat_mse: 0.154040
+  sat_mae: 0.241963
+  light_mse: 0.004843
+  light_mae: 0.053056
+
+Horizon 18:
+  sat_mse: 0.253511
+  sat_mae: 0.326973
+  light_mse: 0.006674
+  light_mae: 0.062477
+
+  
 
 BASELINE:
 Horizon 1:
@@ -61,3 +68,9 @@ Horizon 12:
   sat_mae: 0.217256
   light_mse: 0.000578
   light_mae: 0.002371
+
+  Horizon 18:
+  sat_mse: 0.197050
+  sat_mae: 0.238066
+  light_mse: 0.000557
+  light_mae: 0.002200
