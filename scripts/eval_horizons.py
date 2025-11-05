@@ -25,8 +25,8 @@ def main():
     parser.add_argument(
         "--model_path",
         type=str,
-        required=True,
-        help="Path to the pre-trained model .safetensors file.",
+        required=False,
+        help="Path to the pre-trained model .safetensors file (required unless --baseline is used).",
     )
     parser.add_argument(
         "--data_file",
@@ -83,12 +83,22 @@ def main():
         default=params["model"]["context_frames"],
         help="Number of context frames expected by the model.",
     )
+    parser.add_argument(
+        "--baseline",
+        action="store_true",
+        help="Compute persistence baseline metrics instead of model evaluation.",
+    )
     args = parser.parse_args()
 
-    print(f"Evaluating model at horizons: {args.horizons}")
+    if args.baseline:
+        print(f"Computing baseline persistence at horizons: {args.horizons}")
+    else:
+        print(f"Evaluating model at horizons: {args.horizons}")
     print(f"Data file: {args.data_file}")
     print(f"Initial date: {args.initial_date_str}")
-    print(f"Device: {args.device}")
+    if not args.baseline:
+        print(f"Device: {args.device}")
+        print(f"Model path: {args.model_path}")
 
     # Run evaluation
     results = quick_evaluate(
@@ -101,6 +111,7 @@ def main():
         denoising_steps=args.denoising_steps,
         batch_size=args.batch_size,
         output_dir=args.output_dir,
+        baseline=args.baseline,
     )
 
     # Print results

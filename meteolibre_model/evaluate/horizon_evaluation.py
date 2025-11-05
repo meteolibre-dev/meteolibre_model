@@ -173,6 +173,7 @@ def evaluate_horizons(
     context_frames=4,
     use_residual=True,
     time_step_minutes=10,
+    baseline=False,
 ):
     """
     Evaluate model performance at specified horizons using tiled inference.
@@ -189,13 +190,18 @@ def evaluate_horizons(
         context_frames: Number of context frames.
         use_residual: Whether to use residual forecasting.
         time_step_minutes: Time step between frames in minutes.
+        baseline: If True, compute persistence baseline metrics.
     
     Returns:
         Dict with horizons as keys and metrics as values.
         Metrics: {'sat_mse': float, 'sat_mae': float, 'light_mse': float, 'light_mae': float}
     """
-    model.to(device)
-    model.eval()
+    if baseline:
+        model = None  # Not used for baseline
+    
+    if not baseline:
+        model.to(device)
+        model.eval()
     
     with torch.no_grad():
         # Load HDF5 data
@@ -241,6 +247,11 @@ def evaluate_horizons(
         sat_ctx, light_ctx = normalize(sat_ctx, light_ctx, device)
         current_context = torch.cat([sat_ctx, light_ctx], dim=1)
         
+        # Last context frame for persistence
+        last_context_frame = current_context[:, :, -1:, :, :]  # (1, C, 1, H, W)
+        sat_last = last_context_frame[:, :c_sat, 0]  # (1, C_sat, H, W)
+        light_last = last_context_frame[:, c_sat:, 0]  # (1, C_lightning, H, W)
+        
         # Prepare ground truths (normalized)
         gts = {}
         for h in horizons:
@@ -258,63 +269,85 @@ def evaluate_horizons(
                 'lightning': light_gt_norm.squeeze(0).squeeze(1)  # (1, H, W)
             }
         
-        # Autoregressive generation
+        # Compute metrics
         results = {}
-        current_date = initial_date
-        for step in range(1, max_h + 1):
-            print(f"Generating step {step}/{max_h}")
-            
-            generated_frame = tiled_inference(
-                model=model,
-                initial_context=current_context,
-                patch_size=patch_size,
-                steps=denoising_steps,
-                device=device,
-                date=current_date,
-                c_sat=c_sat,
-                c_lightning=c_lightning,
-                transform=transform,
-                epsg=epsg,
-                transformer=transformer,
-                batch_size=batch_size,
-                use_residual=use_residual,
-            )  # (1, C, 1, H, W) normalized
-            
-            # Split generated frame
-            sat_gen = generated_frame[:, :c_sat, 0]  # (1, C_sat, H, W)
-            light_gen = generated_frame[:, c_sat:, 0]  # (1, C_lightning, H, W)
-            
-            if step in horizons:
-                gt_sat = gts[step]['sat'].unsqueeze(0)  # (1, C_sat, H, W)
-                gt_light = gts[step]['lightning'].unsqueeze(0)  # (1, 1, H, W)
+        if baseline:
+            for h in horizons:
+                gt_sat = gts[h]['sat'].unsqueeze(0)  # (1, C_sat, H, W)
+                gt_light = gts[h]['lightning'].unsqueeze(0)  # (1, 1, H, W)
                 
-                sat_gen = sat_gen.to(device)
-                gt_sat = gt_sat.to(device)
-                light_gen = light_gen.to(device)
-                gt_light = gt_light.to(device)
+                sat_pred = sat_last
+                light_pred = light_last
 
-                sat_mse = F.mse_loss(sat_gen, gt_sat)
-                sat_mae = F.l1_loss(sat_gen, gt_sat)
-                light_mse = F.mse_loss(light_gen, gt_light)
-                light_mae = F.l1_loss(light_gen, gt_light)
+                sat_mse = F.mse_loss(sat_pred, gt_sat)
+                sat_mae = F.l1_loss(sat_pred, gt_sat)
+                light_mse = F.mse_loss(light_pred, gt_light)
+                light_mae = F.l1_loss(light_pred, gt_light)
                 
-                results[step] = {
+                results[h] = {
                     'sat_mse': sat_mse.item(),
                     'sat_mae': sat_mae.item(),
                     'light_mse': light_mse.item(),
                     'light_mae': light_mae.item(),
                 }
-                print(f"Horizon {step}: sat_mse={sat_mse.item():.4f}, light_mse={light_mse.item():.4f}")
-            
-            # Update context for next step: shift and append generated frame
-            generated_frame = generated_frame.unsqueeze(2) if generated_frame.dim() == 4 else generated_frame  # Ensure (1, C, 1, H, W)
-            current_context = torch.cat([
-                current_context[:, :, 1:, :, :].to(device),  # Remove first time step
-                generated_frame.to(device)  # Add new frame
-            ], dim=2)
-            
-            # Update date
-            current_date += timedelta(minutes=time_step_minutes)
+                print(f"Baseline Horizon {h}: sat_mse={sat_mse.item():.4f}, light_mse={light_mse.item():.4f}")
+        else:
+            # Autoregressive generation
+            current_date = initial_date
+            for step in range(1, max_h + 1):
+                print(f"Generating step {step}/{max_h}")
+                
+                generated_frame = tiled_inference(
+                    model=model,
+                    initial_context=current_context,
+                    patch_size=patch_size,
+                    steps=denoising_steps,
+                    device=device,
+                    date=current_date,
+                    c_sat=c_sat,
+                    c_lightning=c_lightning,
+                    transform=transform,
+                    epsg=epsg,
+                    transformer=transformer,
+                    batch_size=batch_size,
+                    use_residual=use_residual,
+                )  # (1, C, 1, H, W) normalized
+                
+                # Split generated frame
+                sat_gen = generated_frame[:, :c_sat, 0]  # (1, C_sat, H, W)
+                light_gen = generated_frame[:, c_sat:, 0]  # (1, C_lightning, H, W)
+                
+                if step in horizons:
+                    gt_sat = gts[step]['sat'].unsqueeze(0)  # (1, C_sat, H, W)
+                    gt_light = gts[step]['lightning'].unsqueeze(0)  # (1, 1, H, W)
+                    
+                    sat_gen = sat_gen.to(device)
+                    gt_sat = gt_sat.to(device)
+                    light_gen = light_gen.to(device)
+                    gt_light = gt_light.to(device)
+
+                    sat_mse = F.mse_loss(sat_gen, gt_sat)
+                    sat_mae = F.l1_loss(sat_gen, gt_sat)
+                    light_mse = F.mse_loss(light_gen, gt_light)
+                    light_mae = F.l1_loss(light_gen, gt_light)
+                    
+                    results[step] = {
+                        'sat_mse': sat_mse.item(),
+                        'sat_mae': sat_mae.item(),
+                        'light_mse': light_mse.item(),
+                        'light_mae': light_mae.item(),
+                    }
+                    print(f"Horizon {step}: sat_mse={sat_mse.item():.4f}, light_mse={light_mse.item():.4f}")
+                
+                # Update context for next step: shift and append generated frame
+                generated_frame = generated_frame.unsqueeze(2) if generated_frame.dim() == 4 else generated_frame  # Ensure (1, C, 1, H, W)
+                current_context = torch.cat([
+                    current_context[:, :, 1:, :, :].to(device),  # Remove first time step
+                    generated_frame.to(device)  # Add new frame
+                ], dim=2)
+                
+                # Update date
+                current_date += timedelta(minutes=time_step_minutes)
         
         return results
 
@@ -350,6 +383,7 @@ def quick_evaluate(
     denoising_steps=64,
     batch_size=32,
     output_dir=None,
+    baseline=False,
 ):
     """
     Quick evaluation wrapper.
@@ -360,11 +394,20 @@ def quick_evaluate(
         initial_date_str: Initial date string for first forecast.
         horizons: List of horizons.
         ... other params.
+        baseline: If True, compute persistence baseline.
     
     Returns:
         Evaluation results dict.
     """
-    model = load_model(model_path, device)
+    if baseline:
+        if model_path is not None:
+            print("Warning: model_path provided but ignored for baseline evaluation.")
+        model = None
+    else:
+        if model_path is None:
+            raise ValueError("model_path is required for non-baseline evaluation.")
+        model = load_model(model_path, device)
+    
     initial_date = datetime.strptime(initial_date_str, "%Y-%m-%d %H:%M")
     
     results = evaluate_horizons(
@@ -376,6 +419,7 @@ def quick_evaluate(
         patch_size=patch_size,
         denoising_steps=denoising_steps,
         batch_size=batch_size,
+        baseline=baseline,
     )
     
     if output_dir:
