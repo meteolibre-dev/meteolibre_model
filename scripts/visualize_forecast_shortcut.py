@@ -55,7 +55,7 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps, use_region
 
     year, month, day = map(int, date_part.split('-'))
     hour, minute = map(int, time_part.split('-'))
-    initial_date = datetime(year, month, day, hour, minute) - timedelta(minutes=forecast_steps*10)
+    initial_date = datetime(year, month, day, hour, minute) - timedelta(minutes=18*10) # 18 to be modify
 
     for channel in [0, 11, 16]:
         images = []
@@ -148,7 +148,7 @@ def main():
     parser.add_argument(
         "--forecast_steps",
         type=int,
-        default=18,
+        default=12,
         help="Number of forecast steps to visualize.",
     )
     parser.add_argument(

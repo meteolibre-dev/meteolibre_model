@@ -180,3 +180,8 @@ GPU monitoring:
 ```bash
 uvx nvitop
 ```
+
+Pushing model to HF:
+```bash
+hf upload meteolibre-dev/meteolibre-rectified-flow models/model_v5_mtg_world_lightning_shortcut_e26.safetensors models_world_shortcut/model_v5_mtg_world_lightning_shortcut_e26.safetensors --repo-type model
+```
