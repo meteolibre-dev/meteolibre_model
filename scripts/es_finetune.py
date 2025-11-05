@@ -28,6 +28,8 @@ from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import (
     full_image_generation  # For potential patch-level eval if needed, but use tiled
 )
 
+from torch.utils.tensorboard import SummaryWriter
+
 def compute_reward(model, data_file, initial_date_str, horizons, device, patch_size=128, 
                    denoising_steps=8, batch_size=32, time_step_minutes=10, use_residual=True):
     """
@@ -47,7 +49,7 @@ def compute_reward(model, data_file, initial_date_str, horizons, device, patch_s
 
 def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, sigma=0.001, 
                  alpha=0.005, device="cuda", patch_size=128, denoising_steps=16, 
-                 batch_size=64, time_step_minutes=10, use_residual=True, save_path=None):
+                 batch_size=64, time_step_minutes=10, use_residual=True, save_path=None, writer=None):
     """
     ES fine-tuning using parameter perturbations and horizon MAE rewards.
     Assumes val_data_dir contains HDF5 files; samples one per evaluation for efficiency.
@@ -101,6 +103,18 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
                 noise = torch.randn_like(param, device=device)
                 param.data.add_(weight * noise * sigma)  # Scale by sigma as in algo
         
+        # Compute and log current model reward after update
+        if writer is not None:
+            model.eval()
+            val_file = random.choice(val_files)
+            current_reward, _ = compute_reward(
+                model, str(val_file), initial_date_str, horizons, device, patch_size,
+                denoising_steps, batch_size, time_step_minutes, use_residual
+            )
+            model.train()
+            writer.add_scalar('Reward/model_reward', current_reward, t+1)
+            print(f"Iter {t+1}/{T}: Model reward {current_reward:.4f}")
+        
         print(f"Iter {t+1}/{T}: Avg reward {rewards.mean().item():.4f}, Std {rewards.std().item():.4f}")
     
     # Restore if needed or save fine-tuned
@@ -129,16 +143,42 @@ def main():
     parser.add_argument("--time_step_minutes", type=int, default=10)
     parser.add_argument("--output_model_path", type=str, default="fine_tuned_model.safetensors",
                         help="Path to save fine-tuned model.")
+    parser.add_argument("--log_dir", type=str, default=None, help="Path to TensorBoard log directory. If None, creates one with timestamp.")
     args = parser.parse_args()
     
+    if args.log_dir is None:
+        log_dir = f"runs/es_finetune_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    else:
+        log_dir = args.log_dir
+    os.makedirs(log_dir, exist_ok=True)
+    writer = SummaryWriter(log_dir)
+    
     model = load_model(args.base_model_path, args.device)
+    
+    # Compute initial reward
+    val_files = list(Path(args.val_data_dir).glob("*.h5"))
+    if not val_files:
+        raise ValueError(f"No HDF5 files found in {args.val_data_dir}")
+    val_file = random.choice(val_files)
+    model.eval()  # Set to eval for initial reward
+    initial_reward, _ = compute_reward(
+        model, str(val_file), args.initial_date_str, args.horizons, args.device,
+        args.patch_size, args.denoising_steps, args.batch_size, args.time_step_minutes, use_residual=True
+    )
+    model.train()  # Back to train
+    writer.add_scalar('Reward/model_reward', initial_reward, 0)
+    print(f"Initial reward: {initial_reward:.4f}")
+    
     es_fine_tune(
         model, args.val_data_dir, args.initial_date_str, args.horizons,
         T=args.T, N=args.N, sigma=args.sigma, alpha=args.alpha,
         device=args.device, patch_size=args.patch_size, denoising_steps=args.denoising_steps,
         batch_size=args.batch_size, time_step_minutes=args.time_step_minutes,
-        save_path=args.output_model_path
+        save_path=args.output_model_path,
+        writer=writer
     )
+    
+    writer.close()
 
 if __name__ == "__main__":
     main()
