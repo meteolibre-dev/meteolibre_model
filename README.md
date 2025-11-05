@@ -170,7 +170,11 @@ To visualize the results:
 ```bash
 pip install imageio[ffmpeg]  
 python -m scripts.visualize_forecast_shortcut --data_file ../dataset/data_inference_full/2025-07-25_21-30_europe_full.h5
+
+
+python -m scripts.visualize_forecast_shortcut --data_file ../dataset/data_inference_full/2025-08-13_20-40_europe_full.h5 --use_region --region_start_row 1300 --region_end_row 2300 --region_start_col 200 --region_end_col 1200
 ```
+
 Install uv:
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
