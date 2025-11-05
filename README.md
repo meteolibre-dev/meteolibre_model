@@ -166,6 +166,11 @@ python -m scripts.tiled_inference_world_correction --denoising_steps 16 --data_f
 
 ```
 
+Eval on long horizon:
+```bash
+python3 -m scripts.eval_horizons --model_path models/models_world_shortcut/model_v1_mtg_world_lightning_shortcut_polynomial_e56.safetensors --data_file ../dataset/data_inference_full/2025-08-13_20-40_europe_full.h5 --initial_date_str '2025-08-13 17:40'
+```
+
 To visualize the results:
 ```bash
 pip install imageio[ffmpeg]  

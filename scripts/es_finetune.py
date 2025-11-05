@@ -18,7 +18,7 @@ sys.path.insert(0, project_root)
 config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
 with open(config_path) as f:
     config = yaml.safe_load(f)
-params = config["model_v1_mtg_world_lightcut_shortcut"]  # Typo fix if needed: model_v1_mtg_world_lightning_shortcut
+params = config["model_v1_mtg_world_lightning_shortcut"]  # Typo fix if needed: model_v1_mtg_world_lightning_shortcut
 
 from meteolibre_model.models.unet3d_film_dual import DualUNet3DFiLM
 from meteolibre_model.evaluate.horizon_evaluation import (
@@ -29,7 +29,7 @@ from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import (
 )
 
 def compute_reward(model, data_file, initial_date_str, horizons, device, patch_size=128, 
-                   denoising_steps=64, batch_size=32, time_step_minutes=10, use_residual=True):
+                   denoising_steps=8, batch_size=32, time_step_minutes=10, use_residual=True):
     """
     Compute reward as -sum(MAEs across horizons) using horizon evaluation.
     Assumes single data file for simplicity; average over multiple if val_dir provided.
@@ -39,13 +39,15 @@ def compute_reward(model, data_file, initial_date_str, horizons, device, patch_s
         horizons, device=device, patch_size=patch_size, denoising_steps=denoising_steps,
         batch_size=batch_size, use_residual=use_residual, time_step_minutes=time_step_minutes
     )
-    total_mae = sum(metrics['sat_mae'] + metrics['light_mae'] for metrics in results.values())
-    reward = -total_mae / len(horizons)  # Negative for minimization; normalize by num horizons
+
+    total_mse = sum(metrics['sat_mse'] / key for key, metrics in results.items()) # + metrics['light_mae']
+
+    reward = -total_mse / len(horizons)  # Negative for minimization; normalize by num horizons
     return reward, results
 
-def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, sigma=0.05, 
-                 alpha=0.005, device="cuda", patch_size=128, denoising_steps=64, 
-                 batch_size=32, time_step_minutes=10, use_residual=True, save_path=None):
+def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, sigma=0.001, 
+                 alpha=0.005, device="cuda", patch_size=128, denoising_steps=16, 
+                 batch_size=64, time_step_minutes=10, use_residual=True, save_path=None):
     """
     ES fine-tuning using parameter perturbations and horizon MAE rewards.
     Assumes val_data_dir contains HDF5 files; samples one per evaluation for efficiency.
@@ -114,15 +116,15 @@ def main():
     parser.add_argument("--val_data_dir", type=str, required=True, help="Dir with HDF5 val files.")
     parser.add_argument("--initial_date_str", type=str, required=True, 
                         help="Date for eval (e.g., '2025-10-14 04:00').")
-    parser.add_argument("--horizons", type=int, nargs='+', default=[1,2,3,6], 
+    parser.add_argument("--horizons", type=int, nargs='+', default=[1, 2, 6, 12, 18], 
                         help="Horizons for MAE reward.")
     parser.add_argument("--T", type=int, default=200, help="ES iterations.")
-    parser.add_argument("--N", type=int, default=30, help="Samples per iteration.")
-    parser.add_argument("--sigma", type=float, default=0.05, help="Perturbation std.")
+    parser.add_argument("--N", type=int, default=10, help="Samples per iteration.")
+    parser.add_argument("--sigma", type=float, default=0.001, help="Perturbation std.")
     parser.add_argument("--alpha", type=float, default=0.005, help="Update rate.")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--patch_size", type=int, default=128)
-    parser.add_argument("--denoising_steps", type=int, default=64)
+    parser.add_argument("--denoising_steps", type=int, default=4)
     parser.add_argument("--batch_size", type=int, default=32)
     parser.add_argument("--time_step_minutes", type=int, default=10)
     parser.add_argument("--output_model_path", type=str, default="fine_tuned_model.safetensors",
