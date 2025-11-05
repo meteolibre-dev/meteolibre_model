@@ -144,7 +144,7 @@ def main():
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
     parser.add_argument("--patch_size", type=int, default=128)
     parser.add_argument("--denoising_steps", type=int, default=4)
-    parser.add_argument("--batch_size", type=int, default=32)
+    parser.add_argument("--batch_size", type=int, default=64)
     parser.add_argument("--time_step_minutes", type=int, default=10)
     parser.add_argument("--output_model_path", type=str, default="fine_tuned_model.safetensors",
                         help="Path to save fine-tuned model.")
