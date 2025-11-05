@@ -185,6 +185,11 @@ GPU monitoring:
 uvx nvitop
 ```
 
+Download model from HF:
+```bash
+hf download meteolibre-dev/meteolibre-rectified-flow models_world_shortcut/model_v1_mtg_world_lightning_shortcut_polynomial_e56.safetensors --local-dir . --repo-type model
+```
+
 Pushing model to HF:
 ```bash
 hf upload meteolibre-dev/meteolibre-rectified-flow models/model_v5_mtg_world_lightning_shortcut_e26.safetensors models_world_shortcut/model_v5_mtg_world_lightning_shortcut_e26.safetensors --repo-type model

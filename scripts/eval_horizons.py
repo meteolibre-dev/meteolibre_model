@@ -62,19 +62,19 @@ def main():
     parser.add_argument(
         "--denoising_steps",
         type=int,
-        default=64,
+        default=8,
         help="Number of denoising steps for each tiled inference.",
     )
     parser.add_argument(
         "--batch_size",
         type=int,
-        default=32,
+        default=64,
         help="Batch size for processing patches during inference.",
     )
     parser.add_argument(
         "--output_dir",
         type=str,
-        default="horizon_eval_results",
+        default=None,
         help="Directory to save evaluation results (NPZ file).",
     )
     parser.add_argument(

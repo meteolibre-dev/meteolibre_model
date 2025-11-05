@@ -288,6 +288,11 @@ def evaluate_horizons(
                 gt_sat = gts[step]['sat'].unsqueeze(0)  # (1, C_sat, H, W)
                 gt_light = gts[step]['lightning'].unsqueeze(0)  # (1, 1, H, W)
                 
+                sat_gen = sat_gen.to(device)
+                gt_sat = gt_sat.to(device)
+                light_gen = light_gen.to(device)
+                gt_light = gt_light.to(device)
+
                 sat_mse = F.mse_loss(sat_gen, gt_sat)
                 sat_mae = F.l1_loss(sat_gen, gt_sat)
                 light_mse = F.mse_loss(light_gen, gt_light)
@@ -304,8 +309,8 @@ def evaluate_horizons(
             # Update context for next step: shift and append generated frame
             generated_frame = generated_frame.unsqueeze(2) if generated_frame.dim() == 4 else generated_frame  # Ensure (1, C, 1, H, W)
             current_context = torch.cat([
-                current_context[:, :, 1:, :, :],  # Remove first time step
-                generated_frame  # Add new frame
+                current_context[:, :, 1:, :, :].to(device),  # Remove first time step
+                generated_frame.to(device)  # Add new frame
             ], dim=2)
             
             # Update date
