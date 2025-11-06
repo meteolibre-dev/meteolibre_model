@@ -286,7 +286,7 @@ def evaluate_horizons(
             light_last = last_context_frame[:, c_sat:, 0]  # (1, C_lightning, H, W)
             
             # Prepare ground truths (normalized)
-            gts_dict = {}
+            gts = {}
             for h in horizons:
                 frame_idx = context_frames + h - 1
                 sat_gt = sat_data[frame_idx]  # (C_sat, H, W)
@@ -297,7 +297,7 @@ def evaluate_horizons(
                 light_gt_t = torch.from_numpy(light_gt).float().to(device).unsqueeze(0).unsqueeze(2)  # (1, 1, 1, H, W)
                 sat_gt_norm, light_gt_norm = normalize(sat_gt_t, light_gt_t, device)
                 
-                gts_dict[h] = {
+                gts[h] = {
                     'sat': sat_gt_norm.squeeze(0).squeeze(1),  # (C_sat, H, W)
                     'lightning': light_gt_norm.squeeze(0).squeeze(1)  # (1, H, W)
                 }
@@ -318,17 +318,18 @@ def evaluate_horizons(
             transform = fixed_params['transform']
             epsg = fixed_params['epsg']
             transformer = fixed_params['transformer']
-            gts_dict = gts
             last_context_frame = current_context[:, :, -1:, :, :]  # (1, C, 1, H, W)
             sat_last = last_context_frame[:, :c_sat, 0]  # (1, C_sat, H, W)
             light_last = last_context_frame[:, c_sat:, 0]  # (1, C_lightning, H, W)
+        
+        eval_gts = gts
         
         # Compute metrics
         results = {}
         if baseline:
             for h in horizons:
-                gt_sat = gts[h]['sat'].unsqueeze(0)  # (1, C_sat, H, W)
-                gt_light = gts[h]['lightning'].unsqueeze(0)  # (1, 1, H, W)
+                gt_sat = eval_gts[h]['sat'].unsqueeze(0)  # (1, C_sat, H, W)
+                gt_light = eval_gts[h]['lightning'].unsqueeze(0)  # (1, 1, H, W)
                 
                 sat_pred = sat_last
                 light_pred = light_last
@@ -372,8 +373,8 @@ def evaluate_horizons(
                 light_gen = generated_frame[:, c_sat:, 0]  # (1, C_lightning, H, W)
                 
                 if step in horizons:
-                    gt_sat = gts[step]['sat'].unsqueeze(0)  # (1, C_sat, H, W)
-                    gt_light = gts[step]['lightning'].unsqueeze(0)  # (1, 1, H, W)
+                    gt_sat = eval_gts[step]['sat'].unsqueeze(0)  # (1, C_sat, H, W)
+                    gt_light = eval_gts[step]['lightning'].unsqueeze(0)  # (1, 1, H, W)
                     
                     sat_gen = sat_gen.to(device)
                     gt_sat = gt_sat.to(device)
