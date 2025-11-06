@@ -173,6 +173,7 @@ def evaluate_horizons(
     context_frames=4,
     use_residual=True,
     time_step_minutes=10,
+    subgrid_size=None,
     baseline=False,
 ):
     """
@@ -206,15 +207,34 @@ def evaluate_horizons(
     with torch.no_grad():
         # Load HDF5 data
         with h5py.File(data_file, "r") as hf:
-            sat_data = np.array(hf["sat_data"])  # (F, C_sat, H, W)
-            lightning_data = np.array(hf["lightning_data"])  # (F, 1, H, W)
+            sat_data_full = np.array(hf["sat_data"])  # (F, C_sat, H_full, W_full)
+            lightning_data_full = np.array(hf["lightning_data"])  # (F, 1, H_full, W_full)
             num_frames = hf.attrs["num_frames"]
-            H = hf.attrs["target_height"]
-            W = hf.attrs["target_width"]
-            transform = hf.attrs["transform"]
+            H_full = hf.attrs["target_height"]
+            W_full = hf.attrs["target_width"]
+            transform_full = hf.attrs["transform"]
             epsg = hf.attrs["epsg"]
             c_sat = hf.attrs["num_sat_channels"]
             c_lightning = hf.attrs["num_lightning_channels"]
+        
+        if subgrid_size is not None:
+            crop_y = (H_full - subgrid_size) // 2
+            crop_x = (W_full - subgrid_size) // 2
+            sat_data = sat_data_full[:, :, crop_y:crop_y+subgrid_size, crop_x:crop_x+subgrid_size]
+            lightning_data = lightning_data_full[:, :, crop_y:crop_y+subgrid_size, crop_x:crop_x+subgrid_size]
+            H = subgrid_size
+            W = subgrid_size
+            # Adjust transform for crop
+            a, b, c, d, e, f = transform_full
+            new_c = a * crop_x + b * crop_y + c
+            new_f = d * crop_x + e * crop_y + f
+            transform = [a, b, new_c, d, e, new_f]
+        else:
+            sat_data = sat_data_full
+            lightning_data = lightning_data_full
+            H = H_full
+            W = W_full
+            transform = transform_full
         
         max_h = max(horizons)
         if num_frames < context_frames + max_h:

@@ -31,7 +31,7 @@ from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import (
 from torch.utils.tensorboard import SummaryWriter
 
 def compute_reward(model, data_file, initial_date_str, horizons, device, patch_size=128, 
-                   denoising_steps=8, batch_size=32, time_step_minutes=10, use_residual=True):
+                   denoising_steps=8, batch_size=32, time_step_minutes=10, use_residual=True, subgrid_size=None):
     """
     Compute reward as -sum(MAEs across horizons) using horizon evaluation.
     Assumes single data file for simplicity; average over multiple if val_dir provided.
@@ -39,7 +39,8 @@ def compute_reward(model, data_file, initial_date_str, horizons, device, patch_s
     results = evaluate_horizons(
         model, data_file, datetime.strptime(initial_date_str, "%Y-%m-%d %H:%M"),
         horizons, device=device, patch_size=patch_size, denoising_steps=denoising_steps,
-        batch_size=batch_size, use_residual=use_residual, time_step_minutes=time_step_minutes
+        batch_size=batch_size, use_residual=use_residual, time_step_minutes=time_step_minutes,
+        subgrid_size=subgrid_size
     )
 
     total_mse = sum(metrics['sat_mse'] / key for key, metrics in results.items()) # + metrics['light_mae']
@@ -79,7 +80,8 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
             val_file = random.choice(val_files)
             reward, _ = compute_reward(
                 model, str(val_file), initial_date_str, horizons, device, patch_size,
-                denoising_steps, batch_size, time_step_minutes, use_residual
+                denoising_steps, batch_size, time_step_minutes, use_residual,
+                subgrid_size=500
             )
             rewards.append(reward)
             
@@ -107,13 +109,18 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
         if writer is not None:
             model.eval()
             val_file = random.choice(val_files)
-            current_reward, _ = compute_reward(
+            current_reward, results = compute_reward(
                 model, str(val_file), initial_date_str, horizons, device, patch_size,
-                denoising_steps, batch_size, time_step_minutes, use_residual
+                denoising_steps, batch_size, time_step_minutes, use_residual,
+                subgrid_size=500
             )
             model.train()
             writer.add_scalar('Reward/model_reward', current_reward, t+1)
             print(f"Iter {t+1}/{T}: Model reward {current_reward:.4f}")
+            for h in horizons:
+                if h in results:
+                    writer.add_scalar(f'Metrics/sat_mse_h{h}', results[h]['sat_mse'], t+1)
+                    print(f"  Horizon {h}: sat_mse {results[h]['sat_mse']:.4f}")
         
         # Log min/max of perturbation rewards
         if writer is not None:
