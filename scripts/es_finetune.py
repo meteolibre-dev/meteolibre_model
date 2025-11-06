@@ -31,17 +31,28 @@ from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import (
 from torch.utils.tensorboard import SummaryWriter
 
 def compute_reward(model, data_file, initial_date_str, horizons, device, patch_size=128, 
-                   denoising_steps=8, batch_size=32, time_step_minutes=10, use_residual=True, subgrid_size=None, seed=None):
+                   denoising_steps=8, batch_size=32, time_step_minutes=10, use_residual=True, subgrid_size=None, seed=None,
+                   initial_context=None, gts=None, fixed_params=None):
     """
     Compute reward as -sum(MAEs across horizons) using horizon evaluation.
     Assumes single data file for simplicity; average over multiple if val_dir provided.
     """
-    results = evaluate_horizons(
-        model, data_file, datetime.strptime(initial_date_str, "%Y-%m-%d %H:%M"),
-        horizons, device=device, patch_size=patch_size, denoising_steps=denoising_steps,
-        batch_size=batch_size, use_residual=use_residual, time_step_minutes=time_step_minutes,
-        subgrid_size=subgrid_size, seed=seed
-    )
+    initial_date = datetime.strptime(initial_date_str, "%Y-%m-%d %H:%M")
+    if initial_context is not None:
+        results = evaluate_horizons(
+            model, data_file=None, initial_date=initial_date,
+            horizons=horizons, device=device, patch_size=patch_size, denoising_steps=denoising_steps,
+            batch_size=batch_size, use_residual=use_residual, time_step_minutes=time_step_minutes,
+            subgrid_size=subgrid_size, seed=seed,
+            initial_context=initial_context, gts=gts, fixed_params=fixed_params
+        )
+    else:
+        results = evaluate_horizons(
+            model, data_file, initial_date,
+            horizons, device=device, patch_size=patch_size, denoising_steps=denoising_steps,
+            batch_size=batch_size, use_residual=use_residual, time_step_minutes=time_step_minutes,
+            subgrid_size=subgrid_size, seed=seed
+        )
 
     total_mse = sum(metrics['sat_mse'] / key for key, metrics in results.items()) # + metrics['light_mae']
 
@@ -72,6 +83,87 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
         val_file = random.choice(val_files)
         seed_data = random.randint(0, 2**32 - 1)
         
+        # Load data once per iteration
+        import h5py
+        import numpy as np
+        import pyproj
+        context_frames = params["model"]["context_frames"]
+        
+        with h5py.File(str(val_file), "r") as hf:
+            sat_data_full = np.array(hf["sat_data"])
+            lightning_data_full = np.array(hf["lightning_data"])
+            num_frames = hf.attrs["num_frames"]
+            H_full = hf.attrs["target_height"]
+            W_full = hf.attrs["target_width"]
+            transform_full = hf.attrs["transform"]
+            epsg = hf.attrs["epsg"]
+            c_sat = hf.attrs["num_sat_channels"]
+            c_lightning = hf.attrs["num_lightning_channels"]
+        
+        subgrid_size_local = 500
+        np.random.seed(seed_data)
+        crop_y = np.random.randint(0, H_full - subgrid_size_local + 1)
+        crop_x = np.random.randint(0, W_full - subgrid_size_local + 1)
+        sat_data = sat_data_full[:, :, crop_y:crop_y+subgrid_size_local, crop_x:crop_x+subgrid_size_local]
+        lightning_data = lightning_data_full[:, :, crop_y:crop_y+subgrid_size_local, crop_x:crop_x+subgrid_size_local]
+        H = subgrid_size_local
+        W = subgrid_size_local
+        # Adjust transform for crop
+        a, b, c, d, e, f = transform_full
+        new_c = a * crop_x + b * crop_y + c
+        new_f = d * crop_x + e * crop_y + f
+        transform = [a, b, new_c, d, e, new_f]
+        
+        max_h = max(horizons)
+        if num_frames < context_frames + max_h:
+            raise ValueError(f"Insufficient frames in {val_file}: need at least {context_frames + max_h}, got {num_frames}.")
+        
+        if epsg != 4326:
+            transformer = pyproj.Transformer.from_crs(f"EPSG:{epsg}", "EPSG:4326", always_xy=True)
+        else:
+            transformer = None
+        
+        # Build initial context
+        initial_frames = []
+        for i in range(context_frames):
+            sat_frame = sat_data[i]
+            lightning_frame = lightning_data[i]
+            frame = np.concatenate([sat_frame, lightning_frame], axis=0)
+            initial_frames.append(frame[None, ...])
+        
+        context_np = np.stack(initial_frames, axis=2)
+        current_context = torch.from_numpy(context_np).float().to(device)
+        
+        # Normalize context
+        sat_ctx = current_context[:, :c_sat]
+        light_ctx = current_context[:, c_sat:]
+        sat_ctx, light_ctx = normalize(sat_ctx, light_ctx, device)
+        initial_context = torch.cat([sat_ctx, light_ctx], dim=1)
+        
+        # Prepare ground truths
+        gts = {}
+        for h in horizons:
+            frame_idx = context_frames + h - 1
+            sat_gt = sat_data[frame_idx]
+            light_gt = lightning_data[frame_idx]
+            
+            sat_gt_t = torch.from_numpy(sat_gt).float().to(device).unsqueeze(0).unsqueeze(2)
+            light_gt_t = torch.from_numpy(light_gt).float().to(device).unsqueeze(0).unsqueeze(2)
+            sat_gt_norm, light_gt_norm = normalize(sat_gt_t, light_gt_t, device)
+            
+            gts[h] = {
+                'sat': sat_gt_norm.squeeze(0).squeeze(1),
+                'lightning': light_gt_norm.squeeze(0).squeeze(1)
+            }
+        
+        fixed_params = {
+            'c_sat': c_sat,
+            'c_lightning': c_lightning,
+            'transform': transform,
+            'epsg': epsg,
+            'transformer': transformer
+        }
+        
         for n in range(N):
             torch.manual_seed(seeds[n])
             # Perturb in-place
@@ -79,11 +171,12 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
                 noise = torch.randn_like(param, device=device) * sigma
                 param.data.add_(noise)
             
-            # Evaluate: sample a val file, compute reward
+            # Evaluate with preloaded data
             reward, _ = compute_reward(
-                model, str(val_file), initial_date_str, horizons, device, patch_size,
+                model, None, initial_date_str, horizons, device, patch_size,
                 denoising_steps, batch_size, time_step_minutes, use_residual,
-                subgrid_size=500, seed=seed_data
+                subgrid_size=subgrid_size_local, seed=seed_data,
+                initial_context=initial_context, gts=gts, fixed_params=fixed_params
             )
             rewards.append(reward)
             

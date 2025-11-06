@@ -163,9 +163,9 @@ def tiled_inference(
 
 def evaluate_horizons(
     model,
-    data_file,
-    initial_date,  # datetime object for the first forecast horizon (h=1)
-    horizons,  # list of integers [1,2,3,...]
+    data_file=None,
+    initial_date=None,  # datetime object for the first forecast horizon (h=1)
+    horizons=None,  # list of integers [1,2,3,...]
     device="cuda",
     patch_size=128,
     denoising_steps=128,
@@ -176,6 +176,9 @@ def evaluate_horizons(
     subgrid_size=None,
     seed=None,
     baseline=False,
+    initial_context=None,
+    gts=None,
+    fixed_params=None,  # dict with 'c_sat', 'c_lightning', 'transform', 'epsg', 'transformer'
 ):
     """
     Evaluate model performance at specified horizons using tiled inference.
@@ -208,94 +211,117 @@ def evaluate_horizons(
         model.eval()
     
     with torch.no_grad():
-        # Load HDF5 data
-        with h5py.File(data_file, "r") as hf:
-            sat_data_full = np.array(hf["sat_data"])  # (F, C_sat, H_full, W_full)
-            lightning_data_full = np.array(hf["lightning_data"])  # (F, 1, H_full, W_full)
-            num_frames = hf.attrs["num_frames"]
-            H_full = hf.attrs["target_height"]
-            W_full = hf.attrs["target_width"]
-            transform_full = hf.attrs["transform"]
-            epsg = hf.attrs["epsg"]
-            c_sat = hf.attrs["num_sat_channels"]
-            c_lightning = hf.attrs["num_lightning_channels"]
-        
-        if subgrid_size is not None:
-            if seed is not None:
-                np.random.seed(seed)
-                crop_y = np.random.randint(0, H_full - subgrid_size + 1)
-                crop_x = np.random.randint(0, W_full - subgrid_size + 1)
-            else:
-                crop_y = (H_full - subgrid_size) // 2
-                crop_x = (W_full - subgrid_size) // 2
-            sat_data = sat_data_full[:, :, crop_y:crop_y+subgrid_size, crop_x:crop_x+subgrid_size]
-            lightning_data = lightning_data_full[:, :, crop_y:crop_y+subgrid_size, crop_x:crop_x+subgrid_size]
-            H = subgrid_size
-            W = subgrid_size
-            # Adjust transform for crop
-            a, b, c, d, e, f = transform_full
-            new_c = a * crop_x + b * crop_y + c
-            new_f = d * crop_x + e * crop_y + f
-            transform = [a, b, new_c, d, e, new_f]
-        else:
-            sat_data = sat_data_full
-            lightning_data = lightning_data_full
-            H = H_full
-            W = W_full
-            transform = transform_full
-        
         max_h = max(horizons)
-        if num_frames < context_frames + max_h:
-            raise ValueError(
-                f"Insufficient frames in {data_file}: need at least {context_frames + max_h}, "
-                f"got {num_frames}. Ensure HDF5 has context + max horizon frames."
-            )
         
-        if epsg != 4326:
-            transformer = pyproj.Transformer.from_crs(
-                f"EPSG:{epsg}", "EPSG:4326", always_xy=True
-            )
-        else:
-            transformer = None
-        
-        # Build initial context from frames 0 to context_frames-1
-        initial_frames = []
-        for i in range(context_frames):
-            sat_frame = sat_data[i]  # (C_sat, H, W)
-            lightning_frame = lightning_data[i]  # (1, H, W)
-            frame = np.concatenate([sat_frame, lightning_frame], axis=0)  # (C_total, H, W)
-            initial_frames.append(frame[None, ...])  # (1, C, H, W)
-        
-        context_np = np.stack(initial_frames, axis=2)  # (1, C, T_ctx, H, W)
-        current_context = torch.from_numpy(context_np).float().to(device)
-        
-        # Normalize context
-        sat_ctx = current_context[:, :c_sat]
-        light_ctx = current_context[:, c_sat:]
-        sat_ctx, light_ctx = normalize(sat_ctx, light_ctx, device)
-        current_context = torch.cat([sat_ctx, light_ctx], dim=1)
-        
-        # Last context frame for persistence
-        last_context_frame = current_context[:, :, -1:, :, :]  # (1, C, 1, H, W)
-        sat_last = last_context_frame[:, :c_sat, 0]  # (1, C_sat, H, W)
-        light_last = last_context_frame[:, c_sat:, 0]  # (1, C_lightning, H, W)
-        
-        # Prepare ground truths (normalized)
-        gts = {}
-        for h in horizons:
-            frame_idx = context_frames + h - 1
-            sat_gt = sat_data[frame_idx]  # (C_sat, H, W)
-            light_gt = lightning_data[frame_idx]  # (1, H, W)
+        if data_file is not None:
+            # Load HDF5 data
+            with h5py.File(data_file, "r") as hf:
+                sat_data_full = np.array(hf["sat_data"])  # (F, C_sat, H_full, W_full)
+                lightning_data_full = np.array(hf["lightning_data"])  # (F, 1, H_full, W_full)
+                num_frames = hf.attrs["num_frames"]
+                H_full = hf.attrs["target_height"]
+                W_full = hf.attrs["target_width"]
+                transform_full = hf.attrs["transform"]
+                epsg = hf.attrs["epsg"]
+                c_sat = hf.attrs["num_sat_channels"]
+                c_lightning = hf.attrs["num_lightning_channels"]
             
-            # Normalize (add batch and time dims)
-            sat_gt_t = torch.from_numpy(sat_gt).float().to(device).unsqueeze(0).unsqueeze(2)  # (1, C_sat, 1, H, W)
-            light_gt_t = torch.from_numpy(light_gt).float().to(device).unsqueeze(0).unsqueeze(2)  # (1, 1, 1, H, W)
-            sat_gt_norm, light_gt_norm = normalize(sat_gt_t, light_gt_t, device)
+            if subgrid_size is not None:
+                if seed is not None:
+                    np.random.seed(seed)
+                    crop_y = np.random.randint(0, H_full - subgrid_size + 1)
+                    crop_x = np.random.randint(0, W_full - subgrid_size + 1)
+                else:
+                    crop_y = (H_full - subgrid_size) // 2
+                    crop_x = (W_full - subgrid_size) // 2
+                sat_data = sat_data_full[:, :, crop_y:crop_y+subgrid_size, crop_x:crop_x+subgrid_size]
+                lightning_data = lightning_data_full[:, :, crop_y:crop_y+subgrid_size, crop_x:crop_x+subgrid_size]
+                H = subgrid_size
+                W = subgrid_size
+                # Adjust transform for crop
+                a, b, c, d, e, f = transform_full
+                new_c = a * crop_x + b * crop_y + c
+                new_f = d * crop_x + e * crop_y + f
+                transform = [a, b, new_c, d, e, new_f]
+            else:
+                sat_data = sat_data_full
+                lightning_data = lightning_data_full
+                H = H_full
+                W = W_full
+                transform = transform_full
             
-            gts[h] = {
-                'sat': sat_gt_norm.squeeze(0).squeeze(1),  # (C_sat, H, W)
-                'lightning': light_gt_norm.squeeze(0).squeeze(1)  # (1, H, W)
+            if num_frames < context_frames + max_h:
+                raise ValueError(
+                    f"Insufficient frames in {data_file}: need at least {context_frames + max_h}, "
+                    f"got {num_frames}. Ensure HDF5 has context + max horizon frames."
+                )
+            
+            if epsg != 4326:
+                transformer = pyproj.Transformer.from_crs(
+                    f"EPSG:{epsg}", "EPSG:4326", always_xy=True
+                )
+            else:
+                transformer = None
+            
+            # Build initial context from frames 0 to context_frames-1
+            initial_frames = []
+            for i in range(context_frames):
+                sat_frame = sat_data[i]  # (C_sat, H, W)
+                lightning_frame = lightning_data[i]  # (1, H, W)
+                frame = np.concatenate([sat_frame, lightning_frame], axis=0)  # (C_total, H, W)
+                initial_frames.append(frame[None, ...])  # (1, C, H, W)
+            
+            context_np = np.stack(initial_frames, axis=2)  # (1, C, T_ctx, H, W)
+            current_context = torch.from_numpy(context_np).float().to(device)
+            
+            # Normalize context
+            sat_ctx = current_context[:, :c_sat]
+            light_ctx = current_context[:, c_sat:]
+            sat_ctx, light_ctx = normalize(sat_ctx, light_ctx, device)
+            current_context = torch.cat([sat_ctx, light_ctx], dim=1)
+            
+            # Last context frame for persistence
+            last_context_frame = current_context[:, :, -1:, :, :]  # (1, C, 1, H, W)
+            sat_last = last_context_frame[:, :c_sat, 0]  # (1, C_sat, H, W)
+            light_last = last_context_frame[:, c_sat:, 0]  # (1, C_lightning, H, W)
+            
+            # Prepare ground truths (normalized)
+            gts_dict = {}
+            for h in horizons:
+                frame_idx = context_frames + h - 1
+                sat_gt = sat_data[frame_idx]  # (C_sat, H, W)
+                light_gt = lightning_data[frame_idx]  # (1, H, W)
+                
+                # Normalize (add batch and time dims)
+                sat_gt_t = torch.from_numpy(sat_gt).float().to(device).unsqueeze(0).unsqueeze(2)  # (1, C_sat, 1, H, W)
+                light_gt_t = torch.from_numpy(light_gt).float().to(device).unsqueeze(0).unsqueeze(2)  # (1, 1, 1, H, W)
+                sat_gt_norm, light_gt_norm = normalize(sat_gt_t, light_gt_t, device)
+                
+                gts_dict[h] = {
+                    'sat': sat_gt_norm.squeeze(0).squeeze(1),  # (C_sat, H, W)
+                    'lightning': light_gt_norm.squeeze(0).squeeze(1)  # (1, H, W)
+                }
+            
+            fixed_params = {
+                'c_sat': c_sat,
+                'c_lightning': c_lightning,
+                'transform': transform,
+                'epsg': epsg,
+                'transformer': transformer
             }
+        else:
+            if initial_context is None or gts is None or fixed_params is None:
+                raise ValueError("When data_file is None, initial_context, gts, and fixed_params must be provided.")
+            current_context = initial_context.to(device)
+            c_sat = fixed_params['c_sat']
+            c_lightning = fixed_params['c_lightning']
+            transform = fixed_params['transform']
+            epsg = fixed_params['epsg']
+            transformer = fixed_params['transformer']
+            gts_dict = gts
+            last_context_frame = current_context[:, :, -1:, :, :]  # (1, C, 1, H, W)
+            sat_last = last_context_frame[:, :c_sat, 0]  # (1, C_sat, H, W)
+            light_last = last_context_frame[:, c_sat:, 0]  # (1, C_lightning, H, W)
         
         # Compute metrics
         results = {}
