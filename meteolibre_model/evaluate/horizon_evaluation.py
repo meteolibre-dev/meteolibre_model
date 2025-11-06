@@ -174,6 +174,7 @@ def evaluate_horizons(
     use_residual=True,
     time_step_minutes=10,
     subgrid_size=None,
+    seed=None,
     baseline=False,
 ):
     """
@@ -191,6 +192,8 @@ def evaluate_horizons(
         context_frames: Number of context frames.
         use_residual: Whether to use residual forecasting.
         time_step_minutes: Time step between frames in minutes.
+        subgrid_size: Size for random subgrid cropping if not None.
+        seed: Random seed for reproducible subgrid cropping.
         baseline: If True, compute persistence baseline metrics.
     
     Returns:
@@ -218,8 +221,13 @@ def evaluate_horizons(
             c_lightning = hf.attrs["num_lightning_channels"]
         
         if subgrid_size is not None:
-            crop_y = (H_full - subgrid_size) // 2
-            crop_x = (W_full - subgrid_size) // 2
+            if seed is not None:
+                np.random.seed(seed)
+                crop_y = np.random.randint(0, H_full - subgrid_size + 1)
+                crop_x = np.random.randint(0, W_full - subgrid_size + 1)
+            else:
+                crop_y = (H_full - subgrid_size) // 2
+                crop_x = (W_full - subgrid_size) // 2
             sat_data = sat_data_full[:, :, crop_y:crop_y+subgrid_size, crop_x:crop_x+subgrid_size]
             lightning_data = lightning_data_full[:, :, crop_y:crop_y+subgrid_size, crop_x:crop_x+subgrid_size]
             H = subgrid_size

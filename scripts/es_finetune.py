@@ -31,7 +31,7 @@ from meteolibre_model.diffusion.rectified_flow_lightning_shortcut import (
 from torch.utils.tensorboard import SummaryWriter
 
 def compute_reward(model, data_file, initial_date_str, horizons, device, patch_size=128, 
-                   denoising_steps=8, batch_size=32, time_step_minutes=10, use_residual=True, subgrid_size=None):
+                   denoising_steps=8, batch_size=32, time_step_minutes=10, use_residual=True, subgrid_size=None, seed=None):
     """
     Compute reward as -sum(MAEs across horizons) using horizon evaluation.
     Assumes single data file for simplicity; average over multiple if val_dir provided.
@@ -40,7 +40,7 @@ def compute_reward(model, data_file, initial_date_str, horizons, device, patch_s
         model, data_file, datetime.strptime(initial_date_str, "%Y-%m-%d %H:%M"),
         horizons, device=device, patch_size=patch_size, denoising_steps=denoising_steps,
         batch_size=batch_size, use_residual=use_residual, time_step_minutes=time_step_minutes,
-        subgrid_size=subgrid_size
+        subgrid_size=subgrid_size, seed=seed
     )
 
     total_mse = sum(metrics['sat_mse'] / key for key, metrics in results.items()) # + metrics['light_mae']
@@ -69,6 +69,9 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
         seeds = [random.randint(0, 2**32 - 1) for _ in range(N)]
         rewards = []
         
+        val_file = random.choice(val_files)
+        seed_data = random.randint(0, 2**32 - 1)
+        
         for n in range(N):
             torch.manual_seed(seeds[n])
             # Perturb in-place
@@ -77,11 +80,10 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
                 param.data.add_(noise)
             
             # Evaluate: sample a val file, compute reward
-            val_file = random.choice(val_files)
             reward, _ = compute_reward(
                 model, str(val_file), initial_date_str, horizons, device, patch_size,
                 denoising_steps, batch_size, time_step_minutes, use_residual,
-                subgrid_size=500
+                subgrid_size=500, seed=seed_data
             )
             rewards.append(reward)
             
@@ -112,7 +114,7 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
             current_reward, results = compute_reward(
                 model, str(val_file), initial_date_str, horizons, device, patch_size,
                 denoising_steps, batch_size, time_step_minutes, use_residual,
-                subgrid_size=500
+                subgrid_size=None
             )
             model.train()
             writer.add_scalar('Reward/model_reward', current_reward, t+1)
