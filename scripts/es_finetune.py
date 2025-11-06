@@ -151,7 +151,7 @@ def load_subgrid_data(val_file, seed_data, horizons, device, context_frames, sub
 
 def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, sigma=0.001, 
                  alpha=0.005, device="cuda", patch_size=128, denoising_steps=16, 
-                 batch_size=64, time_step_minutes=10, use_residual=True, save_path=None, writer=None):
+                 batch_size=64, time_step_minutes=10, use_residual=True, save_path=None, writer=None, log_interval=10):
     """
     ES fine-tuning using parameter perturbations and horizon MAE rewards.
     Assumes val_data_dir contains HDF5 files; samples one per evaluation for efficiency.
@@ -215,7 +215,7 @@ def es_fine_tune(model, val_data_dir, initial_date_str, horizons, T=200, N=30, s
                 param.data.add_(weight * noise * sigma)  # Scale by sigma as in algo
         
         # Compute and log current model reward after update
-        if writer is not None:
+        if writer is not None and (t + 1) % log_interval == 0:
             model.eval()
             val_file = random.choice(val_files)
             current_reward, results = compute_reward(
@@ -265,6 +265,7 @@ def main():
     parser.add_argument("--output_model_path", type=str, default="fine_tuned_model.safetensors",
                         help="Path to save fine-tuned model.")
     parser.add_argument("--log_dir", type=str, default=None, help="Path to TensorBoard log directory. If None, creates one with timestamp.")
+    parser.add_argument("--log_interval", type=int, default=10, help="Interval for logging full model reward and metrics.")
     args = parser.parse_args()
     
     if args.log_dir is None:
@@ -296,7 +297,8 @@ def main():
         device=args.device, patch_size=args.patch_size, denoising_steps=args.denoising_steps,
         batch_size=args.batch_size, time_step_minutes=args.time_step_minutes,
         save_path=args.output_model_path,
-        writer=writer
+        writer=writer,
+        log_interval=args.log_interval
     )
     
     writer.close()
