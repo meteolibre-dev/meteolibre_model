@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 from tqdm import tqdm
 import safetensors.torch
 from pathlib import Path
+import math
 
 # Add project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
@@ -58,7 +59,7 @@ def compute_reward(model, data_file, initial_date_str, horizons, device, patch_s
             subgrid_size=subgrid_size, seed=seed
         )
 
-    total_mse = sum(metrics['sat_mse'] / key for key, metrics in results.items()) # + metrics['light_mae']
+    total_mse = sum(metrics['sat_mse'] / math.sqrt(key) for key, metrics in results.items()) # + metrics['light_mae']
 
     reward = -total_mse / len(horizons)  # Negative for minimization; normalize by num horizons
     return reward, results
@@ -253,8 +254,8 @@ def main():
                         help="Date for eval (e.g., '2025-10-14 04:00').")
     parser.add_argument("--horizons", type=int, nargs='+', default=[1, 2, 6, 12, 18], 
                         help="Horizons for MAE reward.")
-    parser.add_argument("--T", type=int, default=200, help="ES iterations.")
-    parser.add_argument("--N", type=int, default=10, help="Samples per iteration.")
+    parser.add_argument("--T", type=int, default=400, help="ES iterations.")
+    parser.add_argument("--N", type=int, default=15, help="Samples per iteration.")
     parser.add_argument("--sigma", type=float, default=0.001, help="Perturbation std.")
     parser.add_argument("--alpha", type=float, default=0.005, help="Update rate.")
     parser.add_argument("--device", type=str, default="cuda" if torch.cuda.is_available() else "cpu")
