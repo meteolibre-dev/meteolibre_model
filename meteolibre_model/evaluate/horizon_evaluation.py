@@ -434,6 +434,7 @@ def quick_evaluate(
     initial_date_str,  # e.g., "2025-10-14 04:00"
     horizons=[1, 2, 3, 6, 12, 18],
     device="cuda",
+    use_residual=True,
     patch_size=128,
     denoising_steps=64,
     batch_size=32,
@@ -471,6 +472,7 @@ def quick_evaluate(
         initial_date,
         horizons,
         device=device,
+        use_residual=use_residual,
         patch_size=patch_size,
         denoising_steps=denoising_steps,
         batch_size=batch_size,

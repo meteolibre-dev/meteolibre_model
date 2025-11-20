@@ -13,7 +13,7 @@ sys.path.insert(0, project_root)
 config_path = os.path.join(project_root, "meteolibre_model/config/configs.yml")
 with open(config_path) as f:
     config = yaml.safe_load(f)
-params = config["model_v1_mtg_world_lightning_shortcut"]
+params = config["model_v6_mtg_world_lightning_shortcut"]
 
 from meteolibre_model.evaluate.horizon_evaluation import quick_evaluate
 
@@ -62,7 +62,7 @@ def main():
     parser.add_argument(
         "--denoising_steps",
         type=int,
-        default=8,
+        default=16,
         help="Number of denoising steps for each tiled inference.",
     )
     parser.add_argument(
@@ -107,6 +107,7 @@ def main():
         initial_date_str=args.initial_date_str,
         horizons=args.horizons,
         device=args.device,
+        use_residual=bool(params["residual"]),
         patch_size=args.patch_size,
         denoising_steps=args.denoising_steps,
         batch_size=args.batch_size,
