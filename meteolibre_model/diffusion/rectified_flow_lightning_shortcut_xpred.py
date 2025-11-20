@@ -289,7 +289,7 @@ def full_image_generation(
             x_pred = torch.cat([sat_x_pred, lightning_x_pred], dim=1)[:, :, model.context_frames:]
 
             # constant-velocity approximation used in self-consistency loss
-            s_theta = x_t - x_pred
+            s_theta = (x_t - x_pred) / t_val
             x_t = x_t - s_theta * d_const
             x_t = x_t.clamp(-7, 7)
 

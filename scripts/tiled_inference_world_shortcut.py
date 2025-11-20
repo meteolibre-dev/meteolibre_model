@@ -177,6 +177,7 @@ def main():
         type=str,
         default="models/20251019_epoch61_mtg_lightning_soap.safetensors",
         help="Path to the pre-trained model .safetensors file.",
+        
     )
     parser.add_argument(
         "--output_dir",

@@ -107,11 +107,11 @@ class MeteoLibreMapDataset(torch.utils.data.Dataset):
         )
 
         # in case of bad formatting
-        if record["sat_shape"][0] > 5:
-            sat_patch_data = sat_patch_data[:5, :, :, :]
+        if record["sat_shape"][0] > self.nb_temporal:
+            sat_patch_data = sat_patch_data[:self.nb_temporal, :, :, :]
 
-        if record["lightning_shape"][0] > 5:
-            lightning_patch_data = lightning_patch_data[:5, :, :, :]
+        if record["lightning_shape"][0] > self.nb_temporal:
+            lightning_patch_data = lightning_patch_data[:self.nb_temporal, :, :, :]
 
         # now we try to retrieve the longitude latitude of the patch to get the sun orientation on the patches
         long = record["lon"] # longitude

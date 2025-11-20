@@ -20,6 +20,8 @@ from safetensors.torch import save_file
 # custom optimizer TO REMOVE ?
 from heavyball import ForeachSOAP, ForeachMuon
 
+from safetensors.torch import load_file
+
 # Add project root to sys.path
 project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
@@ -95,7 +97,7 @@ def main():
     model_params = params["model"]
     model = DualUNet3DFiLM(**model_params)
 
-    # model_path = "/workspace/meteolibre_model/mtg_lightning.safetensors"
+    # model_path = "models/epoch_6_mtg_meteofrance_.safetensors"
     # state_dict = load_file(model_path)
     
     # model.load_state_dict(state_dict)
@@ -121,6 +123,7 @@ def main():
             disable=not accelerator.is_main_process,
         )
         for batch in progress_bar:
+
             # Perform training step
             with accelerator.accumulate(model):
                 loss, loss_sat, loss_kpi = trainer_step(
@@ -199,6 +202,8 @@ def main():
                     tb_tracker.writer.add_image(
                         "Generated vs Target (normalized)", grid_normalized, epoch
                     )
+                
+                exit()
 
         # This part for saving the model was already correct
         if (epoch) % SAVE_EVERY_N_EPOCHS == 0:
@@ -212,6 +217,7 @@ def main():
                 accelerator.print(f"Model saved to {save_path}")
 
         accelerator.wait_for_everyone()
+
 
     # Save the model
     accelerator.wait_for_everyone()
