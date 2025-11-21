@@ -52,6 +52,38 @@ class FilmLayer(nn.Module):
 # == 3D U-Net Components
 # ==============================================================================
 
+class CausalConv3d(nn.Module):
+    def __init__(self, in_channels, out_channels, kernel_size=(3, 3, 3), stride=(1, 1, 1), bias=False):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.stride = stride
+        
+        # Time padding: We pad (k-1) on the left (past) and 0 on the right (future)
+        # Spatial padding: We pad symmetrically usually (k // 2)
+        
+        # Assuming kernel_size[0] is time, [1] is height, [2] is width
+        time_kernel = kernel_size[0]
+        self.time_pad = time_kernel - 1
+        
+        # Spatial padding (standard "same" padding logic for odd kernels)
+        spatial_pad_h = kernel_size[1] // 2
+        spatial_pad_w = kernel_size[2] // 2
+        
+        # We use manual padding for Time, but let Conv3d handle Spatial padding
+        self.conv = nn.Conv3d(
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            padding=(0, spatial_pad_h, spatial_pad_w), # 0 padding for time in the layer
+            bias=bias
+        )
+
+    def forward(self, x):
+        # F.pad input format: (pad_left, pad_right, pad_top, pad_bottom, pad_front, pad_back)
+        # We only want to pad the "front" (past) of the time dimension.
+        x = F.pad(x, (0, 0, 0, 0, self.time_pad, 0))
+        return self.conv(x)
 
 class ResNetBlock3D(nn.Module):
     """
