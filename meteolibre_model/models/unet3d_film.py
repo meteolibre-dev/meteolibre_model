@@ -109,6 +109,15 @@ class ResNetBlock3D(nn.Module):
         )
         self.bn1 = nn.Identity()  # nn.InstanceNorm3d(out_channels, affine=True)
         self.relu = nn.ReLU(inplace=True)
+
+        # UPDATED: Use CausalConv3d if necessary
+        # self.conv2 = CausalConv3d(
+        #     out_channels,
+        #     out_channels,
+        #     kernel_size=(3, 3, 3),
+        #     bias=False,
+        # )
+
         self.conv2 = nn.Conv3d(
             out_channels,
             out_channels,
