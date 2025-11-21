@@ -11,7 +11,7 @@ import h5py
 import yaml
 
 # Add project root to sys.path
-project_root = os.path.abspath("/home/adrienbufort/Documents/workspace/meteolibre_model")
+project_root = os.path.abspath("/workspace/meteolibre_model/")
 sys.path.insert(0, project_root)
 
 # Load config
