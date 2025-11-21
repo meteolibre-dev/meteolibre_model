@@ -203,7 +203,7 @@ def main():
                         "Generated vs Target (normalized)", grid_normalized, epoch
                     )
                 
-                exit()
+
 
         # This part for saving the model was already correct
         if (epoch) % SAVE_EVERY_N_EPOCHS == 0:
