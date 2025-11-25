@@ -259,6 +259,8 @@ def full_image_generation(
         b, c_sat, t, h, w = sat_data.shape
         b, c_lightning, t, h, w = lightning_data.shape
 
+        nb_forecasted_frame = t - model.context_frames
+
         if normalize_input:
             sat_data, lightning_data = normalize(sat_data, lightning_data, device=device)
 
@@ -270,7 +272,7 @@ def full_image_generation(
         context_info = batch["spatial_position"].to(device)[0:nb_element]
 
         batch_size, nb_channel, _, h, w = x_context.shape
-        x_t = torch.randn(batch_size, nb_channel, 1, h, w, device=device)
+        x_t = torch.randn(batch_size, nb_channel, nb_forecasted_frame, h, w, device=device)
 
         d_const = 1.0 / steps
         t_val = 1.0
