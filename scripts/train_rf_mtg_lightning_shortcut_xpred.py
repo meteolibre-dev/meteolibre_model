@@ -183,8 +183,8 @@ def main():
                 )
 
                 # Select one channel and one batch item for visualization
-                generated_sample = generated_images[0, 11, [0]]  # Shape: (1, H, W)
-                target_sample = x_target[0, 11, [0]].cpu()  # Shape: (1, H, W)
+                generated_sample = generated_images[0, 11]  # Shape: (1, H, W)
+                target_sample = x_target[0, 11].cpu()  # Shape: (1, H, W)
 
                 all_frames = torch.cat([generated_sample, target_sample], dim=0) / 8.0
                 all_frames = all_frames.clamp(-10, 10)
