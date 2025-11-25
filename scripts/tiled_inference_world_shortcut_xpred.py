@@ -55,11 +55,12 @@ def tiled_inference(
     transformer,
     batch_size=64,
     use_residual=True,
+    nb_forecast=1,
 ):
     model.eval()
     model.to(device)
     _, C, T_ctx, H_big, W_big = initial_context.shape
-    x_t_full_res = torch.randn(1, C, 1, H_big, W_big, device=device)
+    x_t_full_res = torch.randn(1, C, nb_forecast, H_big, W_big, device=device)
     # Create two grids of patches
     # Grid 1: Standard grid
     y_starts1 = list(range(0, H_big - patch_size + 1, patch_size))
@@ -84,8 +85,8 @@ def tiled_inference(
         t_val = 1.0 - i * d_const
         t_batch_val = torch.full((1,), t_val, device=device)
         d_batch_val = torch.full((1,), d_const, device=device)
-        aggregated_x_pred = torch.zeros_like(x_t_full_res, device=device)
-        overlap_counts = torch.zeros_like(x_t_full_res, device=device)
+        aggregated_x_pred = torch.zeros(1, C, nb_forecast, H_big, W_big, device=device)
+        overlap_counts = torch.zeros(1, 1, nb_forecast, H_big, W_big, device=device)
         with torch.no_grad():
             for i_batch in range(0, len(patch_coords), batch_size):
                 coords_batch = patch_coords[i_batch : i_batch + batch_size]
@@ -160,13 +161,13 @@ def tiled_inference(
         s_theta = (x_t_full_res - averaged_x_pred) / t_val
         x_t_full_res = x_t_full_res - s_theta * d_const
         x_t_full_res = x_t_full_res.clamp(-7, 7)
-        last_context_frame = initial_context[:, :, -1:, :, :]
+    last_context_frame = initial_context[:, :, -1:, :, :]
     if use_residual:
-        x_t_full_res = x_t_full_res + last_context_frame
+        x_t_full_res[:, :, 0:1, :, :] += last_context_frame
     # Clamp results to be within the expected normalized range
-    x_t_full_res = torch.where(
-        last_context_frame == CLIP_MIN, last_context_frame, x_t_full_res
-    )
+    mask = (last_context_frame == CLIP_MIN).expand(-1, -1, nb_forecast, -1, -1)
+    expanded_last = last_context_frame.expand(-1, -1, nb_forecast, -1, -1)
+    x_t_full_res = torch.where(mask, expanded_last, x_t_full_res)
     return x_t_full_res.cpu()
 
 
@@ -191,6 +192,12 @@ def main():
         type=int,
         default=18,
         help="Number of autoregressive forecast steps to generate.",
+    )
+    parser.add_argument(
+        "--nb_forecast",
+        type=int,
+        default=params.get("nb_forecast", 1),
+        help="Number of frames to forecast per model call (from config).",
     )
     parser.add_argument(
         "--data_file",
@@ -302,11 +309,14 @@ def main():
 
     print(use_residual)
 
-    for step_idx in range(args.forecast_steps):
-        print(f"Autoregressive step {step_idx + 1}/{args.forecast_steps}")
-        # Compute the date for the predicted frame
-        prediction_date = initial_date + timedelta(minutes=10 * (step_idx + 1))
-        # Perform tiled inference for the next frame
+    current_step = 0
+    while current_step < args.forecast_steps:
+        remaining = args.forecast_steps - current_step
+        this_nb = min(args.nb_forecast, remaining)
+        print(f"Autoregressive batch {current_step // args.nb_forecast + 1}, predicting frames {current_step + 1} to {current_step + this_nb}/{args.forecast_steps}")
+        # Compute the date for the first predicted frame in this batch
+        prediction_date = initial_date + timedelta(minutes=10 * (current_step + 1))
+        # Perform tiled inference for the next this_nb frames
 
         generated_frame = tiled_inference(
             model=model,
@@ -322,34 +332,39 @@ def main():
             epsg=epsg,
             transformer=transformer,
             use_residual=use_residual,
-        )  # Shape: (1, nb_channels, 1, H_big, W_big)
-        # Split and denormalize
-        sat_generated = generated_frame[:, :c_sat]
-        lightning_generated = generated_frame[:, c_sat:]
-        sat_generated, lightning_generated = denormalize(
+            nb_forecast=this_nb,
+        )  # Shape: (1, nb_channels, this_nb, H_big, W_big)
+        generated_norm = generated_frame.to(args.device)
+        # Split and denormalize for saving
+        sat_generated = generated_norm[:, :c_sat]
+        lightning_generated = generated_norm[:, c_sat:]
+        sat_denorm, lightning_denorm = denormalize(
             sat_generated, lightning_generated, args.device
         )
-        # Save the generated frame (sat and lightning channels)
-        sat_frame = sat_generated[:, :, 0, :, :]
-        lightning_frame = lightning_generated[:, :, 0, :, :]
-        date = prediction_date
-        filename = f"forecast_{date.strftime('%Y%m%d%H%M')}.npz"
-        output_filepath = os.path.join(args.output_dir, filename)
-        np.savez_compressed(
-            output_filepath,
-            sat_forecast=sat_frame.squeeze(0).cpu().numpy(),
-            lightning_forecast=lightning_frame.squeeze(0).cpu().numpy(),
-        )
-        print(f"Saved forecast to {output_filepath}")
+        # Save each generated frame in the batch
+        for k in range(this_nb):
+            sat_frame = sat_denorm[:, :, k, :, :]
+            lightning_frame = lightning_denorm[:, :, k, :, :]
+            pred_date = initial_date + timedelta(minutes=10 * (current_step + k + 1))
+            filename = f"forecast_{pred_date.strftime('%Y%m%d%H%M')}.npz"
+            output_filepath = os.path.join(args.output_dir, filename)
+            np.savez_compressed(
+                output_filepath,
+                sat_forecast=sat_frame.squeeze(0).cpu().numpy(),
+                lightning_forecast=lightning_frame.squeeze(0).cpu().numpy(),
+            )
+            print(f"Saved forecast to {output_filepath}")
         # Update current_high_res_context for the next autoregressive step
-        # Shift the context: remove the oldest frame, add the newly generated frame
-        current_high_res_context = torch.cat(
-            [
-                current_high_res_context[:, :, 1:, :, :],
-                generated_frame.to(args.device),
-            ],
-            dim=2,
-        )  # (1, nb_channels, 4, H_big, W_big)
+        # Shift the context by this_nb frames: take the last (T_ctx - this_nb) from current + the new this_nb normalized frames
+        T_ctx = args.context_frames
+        if this_nb >= T_ctx:
+            current_high_res_context = generated_norm[:, :, -T_ctx:, :, :]
+        else:
+            tail = current_high_res_context[:, :, this_nb:, :, :]
+            current_high_res_context = torch.cat(
+                [tail, generated_norm[:, :, :this_nb, :, :]], dim=2
+            )
+        current_step += this_nb
     print("Tiled diffusion and autoregressive forecasting complete.")
 
 
