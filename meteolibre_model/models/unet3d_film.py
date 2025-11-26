@@ -199,7 +199,7 @@ class UNet3D(nn.Module):
         for feature in features:
             self.encoder_convs.append(
                 ResNetBlock3D(
-                    current_channels, feature * 2, embedding_dim, self.context_frames
+                    current_channels, feature * 2, embedding_dim, self.context_frames, causal
                 )
             )
             self.downs.append(nn.MaxPool3d(kernel_size=(1, 2, 2), stride=(1, 2, 2)))
