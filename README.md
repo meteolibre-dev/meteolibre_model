@@ -151,7 +151,7 @@ hf download meteolibre-dev/weather_mtg_world_lightning_128_0dot012 --repo-type d
 
 Download inference exemples (one):
 ```bash
-hf download meteolibre-dev/weather_mtg_europe_lightning_128_1km --repo-type dataset --local-dir . data_inference_full/2025-10-20_09-00_full.h5
+hf download meteolibre-dev/weather_mtg_world_lightning_128_0dot012_v0  --repo-type dataset --local-dir . data_inference_full/2025-08-13_20-40_europe_full.h5
 ```
 
 
