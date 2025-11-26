@@ -96,6 +96,7 @@ class ResNetBlock3D(nn.Module):
         out_channels: int,
         embedding_dim: int,
         context_frames: int,
+        causal=False,
     ):
         super().__init__()
         self.context_frames = context_frames
@@ -111,20 +112,23 @@ class ResNetBlock3D(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
         # UPDATED: Use CausalConv3d if necessary
-        # self.conv2 = CausalConv3d(
-        #     out_channels,
-        #     out_channels,
-        #     kernel_size=(3, 3, 3),
-        #     bias=False,
-        # )
+        if causal:
+            self.conv2 = CausalConv3d(
+                out_channels,
+                out_channels,
+                kernel_size=(3, 3, 3),
+                bias=False,
+            )
+        else:
 
-        self.conv2 = nn.Conv3d(
-            out_channels,
-            out_channels,
-            kernel_size=(3, 3, 3),
-            padding=(1, 1, 1),
-            bias=False,
-        )
+            self.conv2 = nn.Conv3d(
+                out_channels,
+                out_channels,
+                kernel_size=(3, 3, 3),
+                padding=(1, 1, 1),
+                bias=False,
+            )
+
         self.bn2 = nn.InstanceNorm3d(out_channels, affine=True)
 
         self.film = FilmLayer(embedding_dim, out_channels)
@@ -169,6 +173,7 @@ class UNet3D(nn.Module):
         context_frames: int = 4,
         num_additional_resnet_blocks: int = 0,
         time_emb_dim: int = 64,
+        causal=False,
     ):
         super().__init__()
         self.features = features
@@ -203,13 +208,13 @@ class UNet3D(nn.Module):
         # --- Bottleneck ---
         bottleneck_channels = features[-1] * 2
         self.bottleneck = ResNetBlock3D(
-            bottleneck_channels, bottleneck_channels, embedding_dim, self.context_frames
+            bottleneck_channels, bottleneck_channels, embedding_dim, self.context_frames, causal
         )
 
         # --- Decoder (Upsampling Path) ---
         for feature in reversed(features):
             self.decoder_convs.append(
-                ResNetBlock3D(feature * 4, feature, embedding_dim, self.context_frames)
+                ResNetBlock3D(feature * 4, feature, embedding_dim, self.context_frames, causal)
             )
 
         self.additional_resnet_blocks = nn.ModuleList()
@@ -217,7 +222,7 @@ class UNet3D(nn.Module):
             blocks = nn.ModuleList()
             for _ in range(self.num_additional_resnet_blocks):
                 blocks.append(
-                    ResNetBlock3D(feature, feature, embedding_dim, self.context_frames)
+                    ResNetBlock3D(feature, feature, embedding_dim, self.context_frames, causal)
                 )
             self.additional_resnet_blocks.append(blocks)
 

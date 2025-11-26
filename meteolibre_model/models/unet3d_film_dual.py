@@ -22,6 +22,7 @@ class DualUNet3DFiLM(nn.Module):
         context_frames: int = 4,
         num_additional_resnet_blocks: int = 0,
         time_emb_dim: int = 64,
+        causal=False,
     ):
         super().__init__()
         self.sat_out_channels = sat_out_channels
@@ -40,6 +41,7 @@ class DualUNet3DFiLM(nn.Module):
             context_frames=context_frames,
             num_additional_resnet_blocks=num_additional_resnet_blocks,
             time_emb_dim=time_emb_dim,
+            causal=causal
         )
 
     def forward(self, sat_input: torch.Tensor, kpi_input: torch.Tensor, context: torch.Tensor):
