@@ -101,12 +101,12 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps, use_region
 
             # Generate a side-by-side comparison image
             fig, axes = plt.subplots(1, 2, figsize=(15, 5.5))
-            im0 = axes[0].imshow(forecast_channel_data, cmap='cividis', vmin=vmin, vmax=vmax)
+            im0 = axes[0].imshow(forecast_channel_data, cmap='viridis', vmin=vmin, vmax=vmax)
             axes[0].set_title(f'Forecast - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
             axes[0].axis('off')
             plt.colorbar(im0, ax=axes[0], shrink=0.8)
             
-            im1 = axes[1].imshow(true_channel_data, cmap='cividis', vmin=vmin, vmax=vmax)
+            im1 = axes[1].imshow(true_channel_data, cmap='viridis', vmin=vmin, vmax=vmax)
             axes[1].set_title(f'True - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
             axes[1].axis('off')
             plt.colorbar(im1, ax=axes[1], shrink=0.8)

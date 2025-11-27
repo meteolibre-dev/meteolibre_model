@@ -31,6 +31,8 @@ class DualUNet3DFiLM(nn.Module):
         # KPI encoder: 1x1 conv to encode channels
         self.kpi_encoder = nn.Conv3d(kpi_in_channels, additional_channels, kernel_size=1)
 
+        print("causal definition is: ", causal)
+
         # Single UNet with combined inputs
         self.unet = UNet3D(
             in_channels=sat_in_channels + additional_channels,
