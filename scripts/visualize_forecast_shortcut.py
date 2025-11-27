@@ -9,6 +9,8 @@ import imageio
 import matplotlib.pyplot as plt
 import h5py
 import yaml
+import cartopy.crs as ccrs
+from cartopy.feature import BORDERS, COASTLINE
 
 # Add project root to sys.path
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir))
@@ -24,6 +26,10 @@ context_frames = params['model']['context_frames']
 c_sat = params['model']['sat_in_channels']
 c_lightning = params['model']['kpi_in_channels']
 nb_channels = c_sat + c_lightning
+
+# Define geospatial extents for Europe/Africa scale (adjust if HDF5 attrs provide exact bounds)
+LON_MIN, LON_MAX = -25, 65
+LAT_MIN, LAT_MAX = 15, 75
 
 def create_video(forecast_dir, data_file, output_dir, forecast_steps, use_region=False, 
                  region_start_row=None, region_end_row=None, region_start_col=None, region_end_col=None):
@@ -41,11 +47,25 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps, use_region
     # Apply region focus if specified
     if use_region and all(x is not None for x in [region_start_row, region_end_row, region_start_col, region_end_col]):
         print(f"Focusing on region: rows {region_start_row}:{region_end_row}, cols {region_start_col}:{region_end_col}")
+        full_height, full_width = sat_data.shape[2], sat_data.shape[3]  # Get full grid size before cropping
         # Crop the data arrays
         print(sat_data.shape)
 
         sat_data = sat_data[:, :, region_start_row:region_end_row, region_start_col:region_end_col]
         lightning_data = lightning_data[:, :, region_start_row:region_end_row, region_start_col:region_end_col]
+
+        # Calculate adjusted extents for cropped region
+        crop_height_ratio = (region_end_row - region_start_row) / full_height
+        crop_width_ratio = (region_end_col - region_start_col) / full_width
+        lat_extent = (LAT_MAX - LAT_MIN) * crop_height_ratio
+        lon_extent = (LON_MAX - LON_MIN) * crop_width_ratio
+        LAT_MIN_crop = LAT_MIN + (LAT_MAX - LAT_MIN) * (region_start_row / full_height)
+        LON_MIN_crop = LON_MIN + (LON_MAX - LON_MIN) * (region_start_col / full_width)
+        LAT_MAX_crop = LAT_MIN_crop + lat_extent
+        LON_MAX_crop = LON_MIN_crop + lon_extent
+    else:
+        LAT_MIN_crop, LAT_MAX_crop = LAT_MIN, LAT_MAX
+        LON_MIN_crop, LON_MAX_crop = LON_MIN, LON_MAX
 
     # Parse initial_date from filename
     filename = os.path.basename(data_file)
@@ -77,7 +97,7 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps, use_region
             sat_forecast = forecast_data['sat_forecast']
             lightning_forecast = forecast_data['lightning_forecast']
             
-            # Apply region focus to forecast data if specified
+            # Apply region focus to forecast data if specified (already handled globally, but ensure consistency)
             if use_region and all(x is not None for x in [region_start_row, region_end_row, region_start_col, region_end_col]):
                 sat_forecast = sat_forecast[:, region_start_row:region_end_row, region_start_col:region_end_col]
                 lightning_forecast = lightning_forecast[:, region_start_row:region_end_row, region_start_col:region_end_col]
@@ -99,17 +119,30 @@ def create_video(forecast_dir, data_file, output_dir, forecast_steps, use_region
             if not vmax:
                 vmax = max(np.max(forecast_channel_data), np.max(true_channel_data)) + 1.0
 
-            # Generate a side-by-side comparison image
-            fig, axes = plt.subplots(1, 2, figsize=(15, 5.5))
-            im0 = axes[0].imshow(forecast_channel_data, cmap='viridis', vmin=vmin, vmax=vmax)
-            axes[0].set_title(f'Forecast - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
-            axes[0].axis('off')
-            plt.colorbar(im0, ax=axes[0], shrink=0.8)
-            
-            im1 = axes[1].imshow(true_channel_data, cmap='viridis', vmin=vmin, vmax=vmax)
-            axes[1].set_title(f'True - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
-            axes[1].axis('off')
-            plt.colorbar(im1, ax=axes[1], shrink=0.8)
+            # Generate a side-by-side comparison image with Cartopy
+            fig = plt.figure(figsize=(15, 5.5))
+            ax0 = fig.add_subplot(1, 2, 1, projection=ccrs.PlateCarree())
+            ax1 = fig.add_subplot(1, 2, 2, projection=ccrs.PlateCarree())
+
+            # Plot forecast
+            im0 = ax0.imshow(forecast_channel_data, cmap='viridis', vmin=vmin, vmax=vmax,
+                             transform=ccrs.PlateCarree(), extent=[LON_MIN_crop, LON_MAX_crop, LAT_MIN_crop, LAT_MAX_crop])
+            ax0.set_title(f'Forecast - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
+            ax0.add_feature(BORDERS, linewidth=0.5, edgecolor='white', facecolor='none')
+            ax0.add_feature(COASTLINE, linewidth=1, edgecolor='gray', facecolor='none')
+            ax0.gridlines(draw_labels=True, alpha=0.3)
+            ax0.set_extent([LON_MIN_crop, LON_MAX_crop, LAT_MIN_crop, LAT_MAX_crop], crs=ccrs.PlateCarree())
+            plt.colorbar(im0, ax=ax0, shrink=0.8)
+
+            # Plot true
+            im1 = ax1.imshow(true_channel_data, cmap='viridis', vmin=vmin, vmax=vmax,
+                             transform=ccrs.PlateCarree(), extent=[LON_MIN_crop, LON_MAX_crop, LAT_MIN_crop, LAT_MAX_crop])
+            ax1.set_title(f'True - Channel {channel} - {prediction_date.strftime("%Y-%m-%d %H:%M")}')
+            ax1.add_feature(BORDERS, linewidth=0.5, edgecolor='white', facecolor='none')
+            ax1.add_feature(COASTLINE, linewidth=1, edgecolor='gray', facecolor='none')
+            ax1.gridlines(draw_labels=True, alpha=0.3)
+            ax1.set_extent([LON_MIN_crop, LON_MAX_crop, LAT_MIN_crop, LAT_MAX_crop], crs=ccrs.PlateCarree())
+            plt.colorbar(im1, ax=ax1, shrink=0.8)
 
             plt.tight_layout()
             
