@@ -1,6 +1,8 @@
 
-
-![webvideos](videos/channel_11_comparison_cleanedwebsite.mp4)
+<video width="100%" height="auto" controls autoplay loop muted>
+ <source src="videos/channel_11_comparison_cleanedwebsite.mp4" type="video/mp4">
+  Your browser does not support the video tag.
+</video>
 
 1km spatial resolution / 10min temporal resolution on whole europe.
 Trained using https://huggingface.co/datasets/meteolibre-dev/mtg_europe_128_1km
