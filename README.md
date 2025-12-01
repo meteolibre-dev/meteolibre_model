@@ -1,8 +1,5 @@
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/VsFikdxbGq0" title="YouTube video player" frameborder="0" allow=
-     "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy=
-  "strict-origin-when-cross-origin" allowfullscreen>
-  </iframe>
+![videos](videos/channel_11_comparison_cleanedwebsite-ezgif.com-video-to-gif-converter.gif)
 
 1km spatial resolution / 10min temporal resolution on whole europe.
 Trained using https://huggingface.co/datasets/meteolibre-dev/mtg_europe_128_1km
